@@ -1,0 +1,59 @@
+/* 全局样式变量 */
+:root {
+  --primary-color: #6366f1;
+  --primary-color-light: #eef2ff;
+  --primary-color-dark: #4f46e5;
+  --bg-base: #ffffff;
+  --bg-elevated: #f5f7fa;
+  --text-color: #1f2937;
+  --border-color: #e5e7eb;
+}
+
+/* 基础重置 */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-elevated);
+  color: var(--text-color);
+  line-height: 1.6;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-elevated);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c0c4cc;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #909399;
+}
+
+/* Element Plus 覆盖样式 */
+.el-input__wrapper,
+.el-textarea__inner {
+  border-radius: 8px !important;
+}
+
+.el-button {
+  border-radius: 8px !important;
+}
