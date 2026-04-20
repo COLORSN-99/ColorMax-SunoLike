@@ -9,14 +9,25 @@ export default defineNuxtConfig({
     '@unocss/nuxt',
     '@element-plus/nuxt'
   ],
-
+  vite:{
+    // 预构建依赖,提升开发环境冷启动和热更新速度
+    optimizeDeps: {
+      include: [
+        'dayjs', // CJS
+        'dayjs/plugin/*.js',
+        'lodash-unified',
+        '@vue/devtools-core',
+        '@vue/devtools-kit',
+      ]
+    }
+  },
   // Element Plus 配置
   elementPlus: {
     importStyle: 'css'
   },
 
   // UnoCSS 配置
-  unoCSS: {
+  unocss: {
     shortcuts: {
       'btn': 'px-4 py-2 rounded-lg font-medium transition-all cursor-pointer',
       'btn-primary': 'btn bg-[#6366f1] text-white hover:bg-[#4f46e5]'

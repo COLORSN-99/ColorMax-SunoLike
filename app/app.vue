@@ -8,7 +8,7 @@ const store = useTemplateStore()
 <template>
   <div class="app-container">
     <NuxtRouteAnnouncer />
-    <NuxtPage />
+    <NuxtPage keep-alive="true" />
   </div>
 </template>
 

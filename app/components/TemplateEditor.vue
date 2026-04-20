@@ -4,7 +4,7 @@ import VariableInput from './VariableInput.vue'
 
 const store = useTemplateStore()
 
-const variableList = computed(() => store.currentTemplate?.variables || [])
+const variableList = computed(() => store.currentTemplate?.variables ?? [])
 </script>
 
 <template>
@@ -17,7 +17,7 @@ const variableList = computed(() => store.currentTemplate?.variables || [])
           v-for="variable in variableList"
           :key="variable.key"
           :variable="variable"
-          :model-value="store.variableValues[variable.key]"
+          :model-value="store.variableValues[variable.key] ?? ''"
           @update:model-value="(v) => store.updateVariable(variable.key, v)"
         />
       </div>

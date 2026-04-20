@@ -11,7 +11,7 @@ onMounted(() => {
   store.loadCustomTemplates()
   // 默认选中第一个模板
   if (!store.currentTemplate && store.allTemplates.length > 0) {
-    store.selectTemplate(store.allTemplates[0])
+    store.selectTemplate(store.allTemplates[0]!)
   }
 })
 </script>
