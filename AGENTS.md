@@ -795,3 +795,96 @@ runtimeConfig: {
 | 2026-04-21 | **交付物扩展**：音频/发布/工程/Prompt/交互/配置 | 完整创作链路 |
 | 2026-04-21 | **多终端支持**：Web + Desktop(Electron) + Mobile(Capacitor) | 全场景覆盖 |
 | 2026-04-21 | **可选云端同步**：核心功能本地，扩展功能可选登录 | 平衡隐私与便利 |
+
+---
+
+## Markdown 书写规范
+
+### 配置文件
+
+- `.markdownlint.json`：项目级 markdownlint 规则配置
+- `commitlint.config.js`：commit message 规范配置
+
+### 已放宽规则说明
+
+由于 AGENTS.md 包含大量 ASCII 图表、紧凑表格和技术文档格式，以下规则已禁用：
+
+| 规则 | 说明 | 状态 |
+|------|------|------|
+| MD022 | 标题前后必须空行 | 已禁用 |
+| MD032 | 列表前后必须空行 | 已禁用 |
+| MD036 | 禁止用粗体代替标题 | 已禁用 |
+| MD040 | 代码块必须指定语言 | 已禁用 |
+| MD060 | 表格管道符两侧必须有空格 | 已禁用 |
+
+### 仍生效的推荐规则
+
+| 规则 | 说明 | 示例 |
+|------|------|------|
+| MD001 | 标题层级递增 | `#` → `##` → `###` |
+| MD003 | 标题风格一致 | 统一用 `#` 风格 |
+| MD009 | 行尾无多余空格 | `行尾不要有空格 ` |
+| MD010 | 禁止硬 Tab | 统一用 2 空格缩进 |
+| MD012 | 代码块前后空行 | 代码块与正文间有空行 |
+| MD013 | 行长度限制 | 建议不超过 120 字符 |
+| MD014 | 命令行示例用 `$` | ```bash\n$ npm install\n``` |
+| MD018 | 标题后必须有空格 | `## 标题` 而非 `##标题` |
+| MD024 | 同级标题内容不重复 | 避免两个 `## 简介` |
+| MD025 | 单个 H1 | 文档只能有一个 `#` |
+| MD031 | 围栏代码块前后空行 |  fenced code block 分隔 |
+| MD033 | 允许 HTML | AGENTS 图表需要 HTML |
+| MD034 | 裸 URL 用尖括号 | `<https://example.com>` |
+| MD038 | 代码标记内无空格 | `代码` 而非 ` 代码 ` |
+| MD041 | 首行必须 H1 | 文档以 `# 标题` 开头 |
+| MD042 | 空链接必须有文本 | `[text](url)` |
+| MD044 | 专有名词大小写 | Vue 而非 vue |
+| MD045 | 图片必须有 alt | `![alt](url)` |
+| MD046 | 代码块风格一致 | 统一用围栏式 ``` |
+| MD047 | 文件末尾空行 | 末尾留一个换行 |
+| MD048 | 代码块围栏风格一致 | 统一用反引号 |
+| MD049 | 强调风格一致 | 统一用 `*` 或 `_` |
+| MD050 | 粗体风格一致 | 统一用 `**` 或 `__` |
+
+### 提交前检查
+
+```bash
+# 手动检查 markdown 格式
+npx markdownlint AGENTS.md
+
+# 自动修复可修复的问题
+npx markdownlint --fix AGENTS.md
+
+# 检查 commit message
+npx commitlint --from=HEAD~1 --to=HEAD
+```
+
+### Commit Message 格式
+
+遵循 Conventional Commits 规范：
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+| Type | 说明 |
+|------|------|
+| `feat` | 新功能 |
+| `fix` | 修复 Bug |
+| `docs` | 文档更新 |
+| `style` | 代码格式（不影响功能） |
+| `refactor` | 重构 |
+| `perf` | 性能优化 |
+| `test` | 测试相关 |
+| `chore` | 构建/工具链 |
+
+示例：
+
+```bash
+git commit -m "feat(creator): 实现 Agent 对话面板"
+git commit -m "docs(AGENTS): 更新产品定位为全链路平台"
+git commit -m "fix(workflow): 修复节点拖拽后位置丢失"
+```

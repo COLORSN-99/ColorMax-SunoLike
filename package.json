@@ -13,10 +13,17 @@
     "prepare": "husky",
     "safe-install": "bash scripts/safe-install.sh"
   },
-   "lint-staged": {
-    "*.{js,ts,vue}": ["eslint --fix", "prettier --write"],
-    "*.{css,scss}": ["stylelint --fix"],
-    "*.md": ["markdownlint --fix"]
+  "lint-staged": {
+    "*.{js,ts,vue}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{css,scss}": [
+      "stylelint --fix"
+    ],
+    "*.md": [
+      "markdownlint --fix"
+    ]
   },
   "dependencies": {
     "@pinia/nuxt": "^0.11.3",
@@ -27,10 +34,13 @@
     "vue-router": "^5.0.4"
   },
   "devDependencies": {
+    "@commitlint/cli": "^20.5.0",
+    "@commitlint/config-conventional": "^20.5.0",
     "@element-plus/nuxt": "^1.1.0",
     "@unocss/nuxt": "^66.1.0",
     "element-plus": "^2.9.0",
     "lint-staged": "^16.4.0",
+    "markdownlint-cli": "^0.48.0",
     "turbo": "^2.9.6",
     "typescript": "^5.7.0"
   }
