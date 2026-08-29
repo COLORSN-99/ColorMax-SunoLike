@@ -1,0 +1,17 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #fafaf7; color: #1d1d1f; }
+main { max-width: 780px; margin: 0 auto; padding: 28px 20px 64px; }
+h1 { font-size: 22px; }
+a { color: #0a6cff; }
+.card { background: #fff; border: 1px solid #e6e6e2; border-radius: 12px; padding: 16px; margin-top: 16px; }
+.prompt { width: 100%; padding: 10px 12px; border: 1px solid #d9d9d4; border-radius: 10px; font-size: 15px; }
+button { padding: 9px 18px; border: none; border-radius: 10px; background: #1d1d1f; color: #fff;
+  font-size: 14px; cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.label { font-size: 12px; color: #777; }
+select, input { padding: 7px 10px; border: 1px solid #d9d9d4; border-radius: 8px; font-size: 13px; }
+.msg { white-space: pre-wrap; padding: 8px 0; border-bottom: 1px dashed #eee; }
+.state { font-family: ui-monospace, monospace; font-size: 12px; color: #555; overflow-x: auto; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: #eef4ff; }

@@ -95,12 +95,132 @@ SUNO_API_BASE=https://localhost:3001   # suno-api 服务
 SUNO_API_COOKIE=…                       #（或由 suno-api 服务自身 .env 管理，本仓不存）
 ```
 
-## 10. 里程碑任务拆分
+## 10. 实现层次（Stage 分层：按需求拆分的优先实现层次）
 
-- **M1**：`create-next-app` + pnpm 结构（apps/web，packages/{agents,engine,schema,llm}）→ 设置面板 + LLM client → intent/plan 两阶段（真实 LLM）→ ①验收：输入→规划 JSON。
-- **M2**：LangGraph 图（intent→plan→dispatch→subagent(mock/mock engine)→align→judge→retry 边）→ 阶段事件 API + 前端进度 → ②验收：图跑通（重派回环可演示）。
-- **M3**：SunoAdapter 对接 suno-api（自托管 + cookie 配置 + 配额预检 + 轮询 + 下载）→ 交付页（音频下载+报告）→ ③验收：完整链路 + 源格式音频下载。
-- 测试：packages/schema 单测（zod 校验）；align/judge 单测（固定 LLM 响应的 rubric 边界）；engine adapter 契约测试（suno-api 单测 mock HTTP）。
+> 原则：每个 Stage 是一个**可独立演示的最小闭环**（上层验收驱动下层）；P0 = MVP 验收必需（按序推进），P1 = 产品壳（验收后按需插入），P2 = 后续路线（不在 MVP）。Stage 内 Step 为本层构建顺序。
+
+### Stage 1 ｜ 输入与规划层（真实 LLM 链路） — P0
+
+- **Step 1.1** 项目骨架：pnpm workspace（apps/web + packages/{schema,llm,engine,agents}）、Next.js 15（App Router）、drizzle+SQLite 初始化、CI-free 本地 dev 脚本
+- **Step 1.2** LLM 设置面板 + `packages/llm` client（OpenAI 兼容：Base URL/Key/Model/温度×三角色；写入 `.env.local` 热生效；**全链路真实调用无 mock**；面板未配置时引导交互）
+- **Step 1.3** 意图分析 + 创作规划（真实 LLM，zod 解析校验 `Intent`/`CreationPlan`，失败重试 2 次退避）
+- **前端形态**：chat 入口（AI SDK 集成基础）+ 创作室规划卡片
+- **验收**：输入一句话 → 意图/规划 JSON 可见（真实 LLM）；配置面板可切换端点
+- 依赖：无（可并行起前端壳与 schema）
+
+### Stage 2 ｜ Agent 编排层（LangGraph Leader 框架，引擎先 Mock 调试） — P0
+
+- **Step 2.1** LangGraph 图：`intent → plan → leader#dispatch → subagent#suno → align#建模 → judge#评分` + 条件边（fail & retry<3 → 回环 / pass → deliver / 超限 → give-up）
+- **Step 2.2** `align`（统一建模：Subagent 交付 → AlignedSong，逐维度对齐主题/情绪/风格/时长/结构）+ `judge`（LLM 多维 rubric 评分 + 规则检测：文件完整/时长 ±15%/歌词非空；PASS_THRESHOLD=3.5；重派记录）
+- **Step 2.3** `MockEngineAdapter`（开发期调试链路）+ jobs 状态机（queued/running/各 phase/done/failed）+ `GET /api/jobs/:id/events` 阶段事件
+- **Step 2.4** 前端：Agent 阶段进度条 + 评判报告卡（维度得分/意见/重派记录）
+- **验收**：图完整跑通（含重派回环可演示）；评判报告可见；step 事件流正常
+- 依赖：Stage 1（plan 真实）；S3 的前置引擎接口以本层定稿
+
+### Stage 3 ｜ 出歌交付层（Suno 真实链路 + 源格式下载） — P0
+
+- **Step 3.1** `SunoAdapter`：suno-api 自托管接入（`SUNO_API_BASE`）、cookie 配置与配额预检（`/api/get_limit`）、`custom_generate`（计划驱动：title/tags/lyrics）、`/api/get?ids` 轮询（5s×≤5min）、源格式音频保存（不转码）
+- **Step 3.2** 交付页：音频播放 + **下载（Suno 源格式）** + 创作记录 + 评判报告归档（songs 表落库）
+- **Step 3.3** 验收脚本/检查单（完整链路 E2E + 风控降级路径：cookie 失效→failed 提示）
+- **验收**：完整链路通过，交付可下载源格式音频（PRD 验收标准 4 条）
+- 依赖：Stage 2（engine 接口/图）+ suno-api 服务上线
+
+### Stage 4 ｜ 产品壳与稳态（P1，验收后按需） — P1
+
+- 创作记录列表页（历史歌曲/报告）、会话持久化完善、失败友好 UI（cookie 失效引导/LLM 未配置引导）、Mock 模式开关 UI（仅开发可见）、README 10 分钟启动说明、基础 e2e 测试
+
+### Stage 5 ｜ M4+ 路线（P2，不实现） — P2
+
+- Stem 分轨/MIDI 导出、Studio DAW 空间、批量流水线/工作流共享、插件化服务接入、Electron 桌面端、资产库完整版（详见 PRD「不做」节）
+
+### Stage 依赖图
+
+```
+Stage 1 ──► Stage 2 ──► Stage 3 ──► Stage 4（P1）
+              ▲ engine 接口定稿       └─► Stage 5（P2 路线）
+              └── MockAdapter 仅 Stage2-3 开发调试；验收/演示必须 SunoAdapter
+```
+
+### 里程碑对应
+
+| 里程碑 | 覆盖 Stage |
+|---|---|
+| M1 | Stage 1 |
+| M2 | Stage 2 |
+| M3 | Stage 3 + 验收 |
+| M4+ | Stage 4-5 |
+
+### 测试策略（按 Stage）
+
+- Stage 1：schema zod 单测、llm client 契约测试（mock HTTP 端点）
+- Stage 2：align/judge 单测（固定 LLM 响应 rubric 边界：3.5 阈值/重派上限）；图端到端（MockAdapter）
+- Stage 3：SunoAdapter 契约测试（suno-api HTTP mock）；E2E 验收脚本
+- Stage 4：前端组件测试 + 全链路 e2e（Playwright，真实 LLM + Mock 引擎回归）
+
+## 11. 测试计划（Test Plan）
+
+**分层**：单测（vitest）｜契约（msw/nock mock HTTP）｜组件（Testing Library）｜集成（图/API 全链，mock 外围）｜E2E（Playwright）｜冒烟（时间盒快速验证）。脚本统一入口：`pnpm test:unit` / `test:contract` / `test:component` / `test:integration` / `test:e2e` / `test:smoke`。
+
+### 11.1 Stage 1 用例
+
+| 用例 | 类型 | 步骤/断言 |
+|---|---|---|
+| S1-T1 配置注入 | 单测 | 面板写入 `.env.local` → llm client 读取 → 请求带对 baseURL/key/model；intent/plan/judge 三角色温度、模型分别生效 |
+| S1-T2 LLM 契约 | 契约 | mock OpenAI `chat/completions` 200 → 解析成功；500/超时 → 重试 2 次退避后 failed；错误消息透传设置面板 |
+| S1-T3 schema 解析 | 单测 | Intent/CreationPlan 合法 → 通过；缺字段/错类型/越界（时长非正、结构为空）→ zod 拒绝并给出字段级错误 |
+| S1-T4 设置面板 | 组件 | 未配置 → 引导页；保存 → 热生效（下条请求命中新端点）；无效 baseURL → 明确报错不崩 |
+| S1-T5 规划集成 | 集成 | `POST /api/chat` + mock LLM → 返回流式意图/规划 JSON；前端规划卡片渲染 |
+
+### 11.2 Stage 2 用例
+
+| 用例 | 类型 | 步骤/断言 |
+|---|---|---|
+| S2-T1 align 建模 | 单测 | 任意形状 Suno 元数据 → AlignedSong 五维（主题/情绪/风格/时长/结构）映射正确；缺元数据字段时降级为 LLM 抽取 |
+| S2-T2 judge 阈值 | 单测 | 评分 3.5 → pass；3.4 → retry；规则检测：时长超 ±15% / 空歌词 / 音频缺失 → 任一失败即 retry（记录原因） |
+| S2-T3 重派回环 | 集成 | fail → retry（seed 更新）→ 二次 pass（断言重派记录=1）；连续 3 次 fail → give-up，交付最优+报告 |
+| S2-T4 图端到端（Mock） | 集成 | AgentState 流转 intent→plan→dispatch→subagent→align→judge→deliver；每个 phase 事件顺序与 payload 校验 |
+| S2-T5 jobs 状态机 | 集成 | queued→running(phases)→done / failed；LLM 500 → failed 且会话可重跑；重复请求幂等（同 jobId 返回同 job） |
+| S2-T6 阶段进度 UI | 组件 | 事件流 → 进度条/报告卡渲染；judge 报告维度与分数展示 |
+
+### 11.3 Stage 3 用例
+
+| 用例 | 类型 | 步骤/断言 |
+|---|---|---|
+| S3-T1 Suno 契约 | 契约 | 配额预检：低配额 → failed(quota) 提示；`custom_generate` 参数映射（计划→prompt/title/tags/lyrics）正确；`/api/get?ids` 轮询（5s 间隔、5min 超时、pending→complete）正确 |
+| S3-T2 源格式保护 | 集成 | 下载不经转码：文件字节与源直链一致、mime 保持（mp3/wav） |
+| S3-T3 交付完整 | 集成 | job done → `/api/jobs/:id/result` 返回 AlignedSong+JudgeReport 完整 → 下载可用且可播 |
+| S3-T4 失效路径 | 集成 | cookie 失效（401/429）→ job failed(reason) → 前端引导续 cookie 界面；恢复后同 job 可重跑 |
+
+### 11.4 冒烟测试（Smoke，整体实现完成后的**必跑项**）
+
+| 用例 | 步骤/断言 | 时间盒 |
+|---|---|---|
+| SM-1 快速链路 | 输入预置文案 → 意图+规划（真实 LLM）→ 引擎（Mock，冒烟不回退真实 Suno 保速）→ 出歌+下载存在 | ≤3 分钟 |
+| SM-2 配置冒烟 | 无效 LLM 端点 → 报错恢复不崩；切回有效 → 恢复可用 | ≤1 分钟 |
+| SM-3 复现冒烟 | 同输入+种子 → 规划/编曲参数一致性断言（计划 hash 相同） | ≤1 分钟 |
+
+冒烟执行：`pnpm test:smoke`（vitest sequential）；作为任何演示/交付前的前置检查。
+
+### 11.5 端到端测试（E2E，Playwright）
+
+| 用例 | 断言 | 备注 |
+|---|---|---|
+| E2E-1 完整链路（Suno） | 输入→意图→规划→Agent 调度→回传→对齐评判→交付页下载**源格式音频**；每步产物可见；报告卡显示 | `@e2e-suno`，需 cookie+配额，演示前手动跑/CI 跳过 |
+| E2E-2 完整链路（Mock 回退） | 同 E2E-1，引擎=Mock | `@e2e-mock`，无 cookie 环境的链路回归（断言全同，仅引擎替） |
+| E2E-3 重派演示 | 注入低分 judge → retry 可见 → 二次成功 | 与 S2-T3 联动 |
+| E2E-4 失败恢复 | LLM 断连 → 重试提示；cookie 失效 → 引导 | 与 S3-T4 联动 |
+
+**执行策略**：E2E-2/3/4 纳入 `test:e2e`（CI 可跑）；E2E-1 为**验收脚本主体**（`test:e2e:suno`，演示前手动执行——即 PRD §5 交付物 2 的可执行化）。
+
+### 11.6 测试矩阵（模块 × 层次）
+
+| 模块 | 单测 | 契约 | 组件 | 集成 | E2E/冒烟 |
+|---|---|---|---|---|---|
+| packages/schema | S1-T3 | — | — | — | — |
+| packages/llm（面板/客户端） | S1-T1 | S1-T2 | S1-T4 | S1-T5 | SM-2 |
+| packages/agents（图/align/judge） | S2-T1, S2-T2 | — | — | S2-T3, S2-T4, S2-T5 | E2E-3 |
+| packages/engine（adapter） | — | S3-T1 | — | S3-T2, S3-T3, S3-T4 | E2E-1/2 |
+| apps/web（UI） | — | — | S2-T6 | — | E2E-1..4, SM-1/3 |
 
 ## 11. 风险
 
