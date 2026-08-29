@@ -8,16 +8,20 @@
     "start": "next start"
   },
   "dependencies": {
+    "@ant-design/x": "^2.9.0",
+    "@colormax/llm": "workspace:*",
+    "@colormax/schema": "workspace:*",
+    "antd": "^6.6.2",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@colormax/schema": "workspace:*",
-    "@colormax/llm": "workspace:*"
+    "@colormax/agents": "workspace:*",
+    "@colormax/engine": "workspace:*"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0"
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.7.0"
   }
 }

@@ -35,3 +35,69 @@ export type CreationPlan = z.infer<typeof CreationPlanSchema>;
 
 export const parseIntent = (raw: unknown): Intent => IntentSchema.parse(raw);
 export const parseCreationPlan = (raw: unknown): CreationPlan => CreationPlanSchema.parse(raw);
+
+/** 歌曲交付（来自引擎，源格式不转码） */
+export const SongResultSchema = z.object({
+  sunoId: z.string(),
+  title: z.string().min(1),
+  lyrics: z.string(),
+  style: z.string(),
+  tags: z.array(z.string()).optional(),
+  audioUrl: z.string(),
+  coverUrl: z.string().optional(),
+  durationSec: z.number(),
+  sourceFormat: z.enum(["mp3", "wav", "flac"]),
+});
+export type SongResult = z.infer<typeof SongResultSchema>;
+
+/** Leader 统一建模对齐：原语义 ↔ 交付结果 */
+export const AlignedSongSchema = z.object({
+  plan: CreationPlanSchema,
+  song: SongResultSchema,
+  alignment: z.object({
+    theme: z.number().min(0).max(5),
+    mood: z.number().min(0).max(5),
+    style: z.number().min(0).max(5),
+    duration: z.number().min(0).max(5),
+    structure: z.number().min(0).max(5),
+  }),
+});
+export type AlignedSong = z.infer<typeof AlignedSongSchema>;
+
+/** 效果评判报告（LLM rubric + 规则检测） */
+export const JudgeReportSchema = z.object({
+  score: z.number().min(0).max(5),
+  perDimension: z.record(z.number().min(0).max(5)),
+  comment: z.string().optional(),
+  rules: z.array(z.object({ name: z.string(), passed: z.boolean(), note: z.string().optional() })),
+  retried: z.number().int(),
+  verdict: z.enum(["pass", "retry", "give-up"]),
+});
+export type JudgeReport = z.infer<typeof JudgeReportSchema>;
+
+export const JOB_PHASES = [
+  "intent",
+  "plan",
+  "dispatch",
+  "suno",
+  "align",
+  "judge",
+  "deliver",
+  "failed",
+] as const;
+export type JobPhase = (typeof JOB_PHASES)[number];
+
+/** 任务对象 */
+export const JobSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  phase: z.enum(JOB_PHASES),
+  status: z.enum(["queued", "running", "done", "failed"]),
+  payload: z.unknown().optional(),
+  report: JudgeReportSchema.nullable().optional(),
+  result: AlignedSongSchema.nullable().optional(),
+  error: z.string().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type Job = z.infer<typeof JobSchema>;

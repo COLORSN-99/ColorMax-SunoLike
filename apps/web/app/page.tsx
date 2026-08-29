@@ -2,47 +2,94 @@
 
 import { useState, useRef } from "react";
 import Link from "next/link";
+import { ConfigProvider, theme, Layout, Card, Tag, List, Typography, Steps } from "antd";
+import { Bubble, Sender, Conversations, Welcome } from "@ant-design/x";
+import { SERVICE_MARKET, PLUGIN_MARKET } from "./data/market";
 
-interface Intent {
-  theme: string;
-  mood: string;
-  style: string;
-  durationSec: number;
-  extra?: string[];
+const { Sider, Content } = Layout;
+const { Text } = Typography;
+
+const PHASES = ["intent", "plan", "dispatch", "suno", "align", "judge", "deliver"] as const;
+const PHASE_LABEL: Record<string, string> = {
+  intent: "意图分析", plan: "创作规划", dispatch: "派发", suno: "Suno 出歌",
+  align: "对齐建模", judge: "效果评判", deliver: "交付",
+};
+
+interface JudgeReport {
+  score: number;
+  perDimension: Record<string, number>;
+  rules: { name: string; passed: boolean }[];
+  retried: number;
+  verdict: string;
 }
-interface Plan {
+interface SongResult {
   title: string;
-  structure: { name: string; lyrics: string }[];
-  arrangement: { key: string; bpm: number; chordProgression: string[]; groove: string };
-  seed: number;
+  audioUrl: string;
+  durationSec: number;
+  sourceFormat: string;
+}
+interface AlignedResult {
+  song: SongResult;
+}
+
+function CodexShell({ children }: { children: React.ReactNode }) {
+  return (
+    <ConfigProvider
+      theme={{
+        algorithm: theme.darkAlgorithm,
+        token: {
+          colorBgBase: "#0d0d0f",
+          colorBgContainer: "#161618",
+          colorBorder: "#2a2a2e",
+          colorText: "#e8e8ea",
+          borderRadius: 6,
+          fontSize: 13,
+        },
+      }}
+    >
+      {children}
+    </ConfigProvider>
+  );
 }
 
 export default function Studio() {
   const [prompt, setPrompt] = useState("给妈妈写一首温暖的中文抒情歌");
-  const [mood, setMood] = useState("温暖");
-  const [style, setStyle] = useState("华语抒情");
-  const [duration, setDuration] = useState(180);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [intent, setIntent] = useState<Intent | null>(null);
-  const [plan, setPlan] = useState<Plan | null>(null);
+  const [msgs, setMsgs] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<string | null>(null);
+  const [planView, setPlanView] = useState<Record<string, unknown> | null>(null);
+  const [report, setReport] = useState<JudgeReport | null>(null);
+  const [result, setResult] = useState<AlignedResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sessions] = useState([
+    { key: "s1", label: "给妈妈写一首温暖的中文抒情歌" },
+    { key: "s2", label: "摇滚风格的毕业告别歌" },
+  ]);
+  const [active, setActive] = useState("s1");
   const logRef = useRef<HTMLDivElement>(null);
+  const lines = useRef<string[]>([]);
 
-  const run = async () => {
+  const run = async (input?: string) => {
+    const p = (input ?? prompt).trim();
+    if (!p || busy) return;
     setBusy(true);
-    setIntent(null);
-    setPlan(null);
     setError(null);
-    const lines: string[] = [];
-    setLogs(lines);
+    setPlanView(null);
+    setReport(null);
+    setResult(null);
+    lines.current = [];
+    setMsgs((m) => [...m, { role: "user", content: p }]);
     try {
-      const res = await fetch("/api/chat", {
+      const created = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, mood, style, duration }),
+        body: JSON.stringify({ prompt: p, sessionId: active }),
       });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      if (!created.ok) throw new Error(`创建任务失败 HTTP ${created.status}`);
+      const { id } = (await created.json()) as { id: string };
+
+      const res = await fetch(`/api/jobs/${id}/events`);
+      if (!res.ok || !res.body) throw new Error(`事件流失败 HTTP ${res.status}`);
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
@@ -57,84 +104,201 @@ export default function Studio() {
           const ev = chunk.match(/event: (.+)/)?.[1];
           const data = chunk.match(/data: (.+)/)?.[1];
           if (!data) continue;
-          try {
-            const parsed = JSON.parse(data);
-            if (ev === "intent") {
-              setIntent(parsed);
-              lines.push(`✓ 意图分析：${parsed.theme} · ${parsed.mood} · ${parsed.style} · ${parsed.durationSec}s`);
-            } else if (ev === "plan") {
-              setPlan(parsed);
-              lines.push(`✓ 创作规划：《${parsed.title}》${parsed.arrangement.key}调 ${parsed.arrangement.bpm}bpm · 段落 ${parsed.structure.length} 段 · seed=${parsed.seed}`);
-            } else if (ev === "error") {
-              throw new Error(parsed.message);
+          const parsed = JSON.parse(data);
+          if (ev === "phase") {
+            const ph = parsed.phase as string;
+            const payload = parsed.payload;
+            setPhase(ph);
+            if (payload) {
+              if (ph === "intent" && payload.theme) {
+                lines.current.push(`意图分析：${payload.theme} · ${payload.mood} · ${payload.style} · ${payload.durationSec}s`);
+              } else if (ph === "plan" && payload.title) {
+                setPlanView(payload);
+                lines.current.push(`创作规划：《${payload.title}》${payload.arrangement.key} 调·${payload.arrangement.bpm}bpm·${payload.structure.length} 段·seed=${payload.seed}`);
+              } else if (ph === "suno" && payload.audioUrl) {
+                lines.current.push(`出歌完成：${payload.durationSec}s（${payload.audioUrl}）`);
+              } else if (ph === "judge" && payload.score !== undefined) {
+                setReport(payload);
+                lines.current.push(`评判：${payload.score} 分（${payload.verdict === "pass" ? "通过" : "重派"} · 已重派 ${payload.retried} 次）`);
+              }
             }
-          } catch (e) {
-            throw e instanceof Error ? e : new Error(String(e));
+          } else if (ev === "done") {
+            setResult(parsed.result);
+            if (parsed.report) setReport(parsed.report);
+            lines.current.push("✓ 交付完成");
+          } else if (ev === "failed") {
+            throw new Error(parsed.error);
           }
+          setMsgs((m) => {
+            const last = m[m.length - 1];
+            const content = lines.current.join("\n");
+            if (last?.role === "assistant" && last.content === content) return m;
+            return last?.role === "assistant"
+              ? [...m.slice(0, -1), { role: "assistant", content }]
+              : [...m, { role: "assistant", content }];
+          });
         }
-        setLogs([...lines]);
-        if (logRef.current) logRef.current.scrollIntoView({ behavior: "smooth" });
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      setMsgs((m) => [...m, { role: "assistant", content: `错误：${msg}` }]);
     } finally {
       setBusy(false);
     }
   };
 
+  const stepIndex = phase ? PHASES.indexOf((phase as (typeof PHASES)[number])) : 0;
+
   return (
-    <main>
-      <h1>ColorMax 创作室 <span className="badge">Stage 1 · 意图/规划</span></h1>
-      <p className="label">
-        一句话，一首歌。先完成意图分析与创作规划（真实 LLM，需先{" "}
-        <Link href="/settings">配置模型</Link>）。
-      </p>
-      <div className="card">
-        <textarea
-          className="prompt"
-          rows={2}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder="输入创作想法…"
-        />
-        <div className="row">
-          <span className="label">情绪</span>
-          <input value={mood} onChange={(e) => setMood(e.target.value)} />
-          <span className="label">风格</span>
-          <input value={style} onChange={(e) => setStyle(e.target.value)} />
-          <span className="label">时长(秒)</span>
-          <select value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
-            {[90, 150, 180, 210, 240].map((s) => (
-              <option key={s} value={s}>{s}s</option>
-            ))}
-          </select>
-          <button onClick={run} disabled={busy || !prompt.trim()}>
-            {busy ? "创作中…" : "开始创作"}
-          </button>
-        </div>
-      </div>
-
-      {error && <div className="card" style={{ color: "#b00020" }}>错误：{error}</div>}
-
-      {logs.length > 0 && (
-        <div className="card">
-          <b>阶段输出</b>
-          <div ref={logRef} className="state">
-            {logs.map((l, i) => (
-              <div key={i}>{l}</div>
-            ))}
+    <CodexShell>
+      <Layout style={{ height: "100vh", background: "#0d0d0f" }}>
+        <Sider width={300} style={{ background: "#121214", borderRight: "1px solid #242428", overflow: "auto" }}>
+          <div style={{ padding: "12px 12px 4px" }}>
+            <Text strong style={{ color: "#9a9aa0", fontSize: 11, letterSpacing: ".8px" }}>
+              应用服务 · APP MARKET
+            </Text>
           </div>
-        </div>
-      )}
-
-      {plan && (
-        <div className="card">
-          <b>创作计划</b>
-          <div className="state">
-            <pre>{JSON.stringify(plan, null, 2)}</pre>
+          <List
+            size="small"
+            style={{ padding: "0 8px" }}
+            dataSource={SERVICE_MARKET}
+            renderItem={(it) => (
+              <List.Item style={{ borderBlockEnd: "none", padding: "6px 10px" }}>
+                <div style={{ width: "100%" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <Text style={{ fontSize: 13, color: "#e8e8ea" }}>{it.name}</Text>
+                    <Tag color={it.status === "running" ? "green" : "default"} style={{ fontSize: 10, lineHeight: "16px", marginInlineEnd: 0 }}>
+                      {it.status === "running" ? "运行中" : "即将上线"}
+                    </Tag>
+                    <Tag style={{ fontSize: 10, marginInlineEnd: 0, background: "#1f1f24" }}>{it.tag}</Tag>
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{it.desc}</Text>
+                </div>
+              </List.Item>
+            )}
+          />
+          <div style={{ padding: "14px 12px 4px" }}>
+            <Text strong style={{ color: "#9a9aa0", fontSize: 11, letterSpacing: ".8px" }}>插件 · PLUGINS</Text>
           </div>
-        </div>
-      )}
-    </main>
+          <List size="small" style={{ padding: "0 8px" }} dataSource={PLUGIN_MARKET}
+            renderItem={(it) => (
+              <List.Item style={{ borderBlockEnd: "none", padding: "6px 10px" }}>
+                <div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <Text style={{ fontSize: 13 }}>{it.name}</Text>
+                    <Tag style={{ fontSize: 10, marginInlineEnd: 0 }}>{it.tag}</Tag>
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>{it.desc}</Text>
+                </div>
+              </List.Item>
+            )}
+          />
+          <div style={{ padding: "18px 12px 4px", borderTop: "1px solid #242428" }}>
+            <Text strong style={{ color: "#9a9aa0", fontSize: 11, letterSpacing: ".8px" }}>对话历史 · SESSIONS</Text>
+          </div>
+          <Conversations
+            style={{ padding: "0 8px 24px" }}
+            items={sessions.map((s) => ({ key: s.key, label: s.label }))}
+            activeKey={active}
+            onActiveChange={setActive}
+          />
+        </Sider>
+
+        <Content style={{ display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "10px 20px", borderBottom: "1px solid #242428", display: "flex", gap: 12, alignItems: "center" }}>
+            <Text strong>color-max / studio</Text>
+            <Link href="/settings"><Text style={{ color: "#6a6acd" }}>LLM 设置 ↗</Text></Link>
+            <Text type="secondary" style={{ fontSize: 12 }}>Stage 2：LangGraph 编排 · 对齐评判</Text>
+          </div>
+
+          {phase && (
+            <div style={{ padding: "12px 20px 0" }}>
+              <Steps
+                size="small"
+                current={Math.max(0, stepIndex)}
+                items={PHASES.map((ph) => ({ title: PHASE_LABEL[ph], description: phase === ph ? "执行中" : undefined }))}
+              />
+            </div>
+          )}
+
+          <div ref={logRef} style={{ flex: 1, overflow: "auto", padding: 20 }}>
+            {msgs.length === 0 ? (
+              <Welcome
+                icon={<span style={{ fontSize: 30 }}>🎵</span>}
+                title="ColorMax 创作室"
+                description="一句话，一首歌。多 Agent 联合编曲：意图分析 → 规划 → 派发 Sub-Agent 调 Suno → 对齐建模 → 效果评判 → 交付（当前引擎：Mock 调试链路）。"
+              />
+            ) : (
+              <Bubble.List
+                items={msgs.map((m, i) => ({
+                  key: i,
+                  placement: m.role === "user" ? "end" : "start",
+                  role: m.role,
+                  content: m.content,
+                }))}
+              />
+            )}
+
+            {error && <div style={{ color: "#ff7875", marginTop: 8 }}>错误：{error}</div>}
+
+            {planView && (
+              <Card size="small" style={{ marginTop: 12, background: "#141417", borderColor: "#2a2a2e" }}
+                title={<Text style={{ fontSize: 12 }}>创作计划 JSON</Text>}>
+                <pre style={{ margin: 0, fontSize: 12, color: "#9ecbff", overflow: "auto" }}>
+                  {JSON.stringify(planView, null, 2)}
+                </pre>
+              </Card>
+            )}
+
+            {report && (
+              <Card size="small" style={{ marginTop: 12, background: "#141417", borderColor: "#2a2a2e" }}
+                title={<Text style={{ fontSize: 12 }}>效果评判报告 · {report.score} 分（{report.verdict === "pass" ? "通过" : "重派"}，已重派 {report.retried} 次）</Text>}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {Object.entries(report.perDimension ?? {}).map(([k, v]) => (
+                    <div key={k} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <Text style={{ width: 70, fontSize: 12, color: "#b8b8bd" }}>{k}</Text>
+                      <div style={{ flex: 1, background: "#1d1d22", height: 6, borderRadius: 3 }}>
+                        <div style={{ width: `${(v / 5) * 100}%`, background: "#6a6acd", height: 6, borderRadius: 3 }} />
+                      </div>
+                      <Text style={{ fontSize: 12, width: 26, textAlign: "right" }}>{v}</Text>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  {report.rules?.map((r) => (
+                    <Tag key={r.name} color={r.passed ? "green" : "red"} style={{ fontSize: 11, margin: 4 }}>
+                      {r.passed ? "✓" : "✗"} {r.name}
+                    </Tag>
+                  ))}
+                </div>
+              </Card>
+            )}
+
+            {result?.song && (
+              <Card size="small" style={{ marginTop: 12, background: "#141417", borderColor: "#2a2a2e" }}
+                title={<Text style={{ fontSize: 12 }}>交付 · {result.song.title}（{result.song.durationSec}s · {result.song.sourceFormat}）</Text>}>
+                <audio controls src={result.song.audioUrl} style={{ width: "100%" }} />
+                <div style={{ marginTop: 8 }}>
+                  <a href={result.song.audioUrl} download style={{ color: "#6a6acd", fontSize: 13 }}>
+                    下载源格式音频 ↓
+                  </a>
+                </div>
+              </Card>
+            )}
+          </div>
+
+          <div style={{ padding: "12px 20px 20px", borderTop: "1px solid #242428" }}>
+            <Sender
+              loading={busy}
+              value={prompt}
+              onChange={setPrompt}
+              onSubmit={run}
+              placeholder="描述你的创作想法…（Enter 发送）"
+            />
+          </div>
+        </Content>
+      </Layout>
+    </CodexShell>
   );
 }
