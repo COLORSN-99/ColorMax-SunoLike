@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import Link from "next/link";
 import { ConfigProvider, theme, Layout, Card, Tag, List, Typography, Steps, Alert } from "antd";
+import SongsBoard from "./components/SongsBoard";
 import { Bubble, Sender, Conversations, Welcome } from "@ant-design/x";
 import { SERVICE_MARKET, PLUGIN_MARKET } from "./data/market";
 
