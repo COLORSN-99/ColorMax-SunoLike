@@ -13,7 +13,7 @@ export interface RenderRequest {
 
 export interface RenderResult {
   audioUrl: string;      // 相对可下载 URL（如 /generated/xxx.wav）
-  sourceFormat: "wav" | "mp3" | "flac";
+  sourceFormat: "wav" | "mp3" | "flac" | "m4a";
   durationSec: number;
   raw: Record<string, unknown>;
 }

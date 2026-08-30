@@ -14,6 +14,24 @@ interface MockCtx {
 }
 
 /** 最小 AxiosInstance 替身（拦截器 stub） */
+
+const RIGHTS_FIXTURE = await (async () => {
+  const sub = globalThis.crypto.subtle;
+  const te = new TextEncoder();
+  const d = await sub.digest("SHA-256", te.encode("tok"));
+  const userKey = await sub.importKey("raw", d, { name: "AES-GCM" }, false, ["encrypt"]);
+  const ctrKeyRaw = new Uint8Array(16).fill(7);
+  const ctrIvRaw = new Uint8Array(16).map((_, i) => i + 1);
+  const wrap = async (raw: Uint8Array) => {
+    const iv = new Uint8Array(12).fill(9);
+    const ct = await sub.encrypt({ name: "AES-GCM", iv, additionalData: te.encode("c1") }, userKey, raw);
+    const o = new Uint8Array(iv.length + ct.byteLength);
+    o.set(iv); o.set(new Uint8Array(ct), iv.length);
+    return Buffer.from(o).toString("base64");
+  };
+  return { key: await wrap(ctrKeyRaw), iv: await wrap(ctrIvRaw) };
+})();
+
 function stubTransport(ctx: MockCtx): AxiosInstance {
   const base: AxiosInstance = {
     interceptors: { request: { use: () => 0, eject: () => 0, clear: () => 0 }, response: { use: () => 0, eject: () => 0, clear: () => 0 } },
@@ -26,13 +44,15 @@ function stubTransport(ctx: MockCtx): AxiosInstance {
           ctx.calls.push({ url: u, method: String(prop) });
           if (u.includes("/api/c/check")) return { data: { required: ctx.captcha }, status: 200, headers: {} };
           if (u.includes("/api/billing/info/")) return { data: { total_credits_left: ctx.credits, period: "m", monthly_limit: 100, monthly_usage: 10 }, status: 200, headers: {} };
+          if (u.includes("/api/mango/rights")) return { data: RIGHTS_FIXTURE, status: 200, headers: {} };
           if (u.includes("/api/generate/v2/")) return { data: { clips: [{ id: "c1", title: "t", audio_url: "", status: "queued", metadata: {} }] }, status: 200, headers: {} };
+          if (u.includes("cloudfront") || u.includes("cdn.example")) return { data: Buffer.alloc(32, 5), status: 200, headers: {} };
           if (u.includes("cdn.example")) return { data: Buffer.from("RIFF-test"), status: 200, headers: {} };
           if (u.includes("/api/clip/")) return { data: { id: "c1", status: "complete", audio_url: "https://studio-api.prod.suno.com/api/forbidden", media_urls: [{ url: "https://cdn1.suno.ai/c1.mp3" }, { url: "https://d2lwuy8qc234o3.cloudfront.net/1/clip/c1.m4a" }] }, status: 200, headers: {} };
           if (u.includes("/api/feed/v2")) return { data: { clips: [{ id: "c1", title: "t", audio_url: "https://cdn.example/c1.mp3", status: ctx.feedStatus, created_at: "x", model_name: "m", metadata: { prompt: "p", duration: "3:00" }, duration: "3:00" }] }, status: 200, headers: {} };
-          if (u.includes("clerk.suno.com") || u.includes("auth.suno.com")) return { data: { response: { last_active_session_id: "sid1" } }, status: 200, headers: {} };
-          if (u.includes("/v1/client")) return { data: { response: { last_active_session_id: "sid1" } }, status: 200, headers: {} };
           if (u.includes("/sessions/")) return { data: { jwt: "tok" }, status: 200, headers: {} };
+          if (u.includes("/v1/client")) return { data: { response: { last_active_session_id: "sid1" } }, status: 200, headers: {} };
+          if (u.includes("clerk.suno.com") || u.includes("auth.suno.com")) return { data: { response: { last_active_session_id: "sid1" } }, status: 200, headers: {} };
           return { data: {}, status: 200, headers: {} };
         };
       }
@@ -60,8 +80,10 @@ test("G1 契约：render 全链（quota→generate→poll→源格式下载）",
       waitAudioMs: 800,
     });
     const res = await adapter.render(REQ);
-    assert.equal(res.sourceFormat, "mp3");
-    assert.ok(res.audioUrl.startsWith("https://cdn1.suno.ai/") || res.audioUrl.startsWith("https://d2lwuy8qc234o3"), "远程源链接交付（浏览器会话播放）");
+    assert.equal(res.sourceFormat, "m4a");
+    assert.ok(res.audioUrl.startsWith("/generated/"), "解密后同源交付");
+    const f = join(dir, "generated", res.audioUrl.replace(/^\/generated\//, ""));
+    assert.ok(existsSync(f) && statSync(f).size > 0, "解密音频落盘");
     assert.ok(ctx.calls.some((c) => c.url.includes("/api/generate/v2/")), "custom_generate 命中");
     assert.ok(ctx.calls.some((c) => c.url.includes("/api/feed/v2")), "poll 命中");
   } finally {
@@ -110,7 +132,7 @@ test("G3 captcha 触发 → 轮换 cookie（第 1 个剔除后第 2 个成功）
     waitAudioMs: 800,
   });
   const res = await adapter.render(REQ); // captcha cookie 失败 → 自动用第 2 个
-  assert.ok(res.audioUrl.includes("cdn1.suno.ai") || res.audioUrl.includes("cloudfront"));
+  assert.ok(res.audioUrl.startsWith("/generated/"));
   const pool = new CookiePool(["a", "b"]);
   assert.equal(pool.next(), "a");
   pool.disable("a");

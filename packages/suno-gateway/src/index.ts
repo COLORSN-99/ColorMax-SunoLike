@@ -1,3 +1,4 @@
+export * from "./decrypt.ts";
 export * from "./proxy.ts";
 export * from "./pool.ts";
 export * from "./adapter.ts";

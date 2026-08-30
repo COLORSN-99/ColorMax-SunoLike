@@ -64,24 +64,13 @@ export default function Songs() {
                     </Text>
                   </div>
                   <div style={{ marginTop: 6 }}>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                      <span className="label">时长 {s.durationSec} · {s.model}</span>
-                      <a href="https://suno.com/create" target="_blank" rel="noreferrer" style={{ color: "#6a6acd", fontSize: 12 }}>
-                        ▶ 在 Suno 面板查收播放（需已登录）
-                      </a>
+                    <audio controls src={`/api/songs/${s.id}/audio`} style={{ width: "100%", height: 30 }} />
+                    <div style={{ marginTop: 6, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                      <span className="label">时长 {s.durationSec} · {s.model} · DRM 解密同源播放</span>
                       <a href={s.audioUrl} target="_blank" rel="noreferrer" style={{ color: "#6a6acd", fontSize: 12 }}>
-                        ↗ 源链接
+                        ↗ 原始源链接
                       </a>
                     </div>
-                    <button
-                      style={{ marginTop: 8, background: "#1f1f24", color: "#b8b8bd", fontSize: 12 }}
-                      onClick={() => {
-                        navigator.clipboard?.writeText(s.audioUrl ?? "");
-                        alert("已复制源链接");
-                      }}
-                    >
-                      复制源链接
-                    </button>
                   </div>
                 </div>
               </div>

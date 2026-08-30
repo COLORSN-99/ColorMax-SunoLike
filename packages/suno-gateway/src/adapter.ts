@@ -6,6 +6,7 @@ import axios from "axios";
 import { detectSystemProxy } from "./proxy.ts";
 import { sunoApi, CaptchaRequiredError, DEFAULT_MODEL } from "../vendor/SunoApi.ts";
 import { CookiePool } from "./pool.ts";
+import { decryptClipAudio } from "./decrypt.ts";
 
 /** 二次开发：以 vendor suno-api 为基座的本地 Suno 出歌适配器（EngineAdapter 兼容形态） */
 
@@ -33,7 +34,7 @@ export interface SunoRenderRequest {
 
 export interface SunoRenderResult {
   audioUrl: string;
-  sourceFormat: "mp3" | "wav" | "flac";
+  sourceFormat: "mp3" | "wav" | "flac" | "m4a";
   durationSec: number;
   raw: Record<string, unknown>;
 }
@@ -101,14 +102,19 @@ export class SunoGatewayAdapter {
 
     // 二次开发点⑪: feed 不含 media_urls（audio_url 恒为 forbidden 占位）——经 /api/clip/{id} 详情取真实音频源
     const detail = (await api.getClip(final.id)) as Record<string, unknown>;
+    // 二次开发点⑭: 下载密文 → DRM 解密（rights GCM unwrap + AES-CTR，逆向自 suno web）→ 明文同源保存 → 本地播放
     const sources = this.resolveSources(detail);
     if (sources.length === 0) throw new Error("音频源缺失（详情接口 media_urls 未就绪）");
-    const ext = this.detectExt(sources[0]);
-    // 二次开发点⑫: 源格式音频由客户端浏览器会话播放/下载交付（Suno 对自动化下载 policy 封锁：
-    // cdn1 socket hang up / cloudfront 加密 blob；浏览器上下文=放行环境，<audio>/<a download> 无需 CORS）
+    const encryptedRes = await this.transport().get(sources[0]!, { responseType: "arraybuffer", timeout: 60_000 });
+    const encrypted = new Uint8Array(encryptedRes.data as ArrayBuffer);
+    const decrypted = await decryptClipAudio(api, final.id, encrypted);
+    const ext = "m4a";
+    const fileName = `suno_${req.title.slice(0, 40).replace(/[^\w\u4e00-\u9fff-]+/g, "_")}_${req.seed}.${ext}`;
+    if (!existsSync(this.opts.publicDir)) await mkdir(this.opts.publicDir, { recursive: true });
+    await writeFile(join(this.opts.publicDir, fileName), decrypted);
     return {
-      audioUrl: sources[0],
-      sourceFormat: ext as "mp3" | "wav" | "flac",
+      audioUrl: `/generated/${fileName}`,
+      sourceFormat: ext as "mp3" | "wav" | "flac" | "m4a",
       durationSec: Number(final.duration ?? req.durationSec) || req.durationSec,
       raw: final as unknown as Record<string, unknown>,
     };

@@ -623,6 +623,22 @@ class SunoApi {
     return response.data;
   }
 
+  /** 二次开发点⑬: 当前会话 JWT（解密用） */
+  public getJwt(): string | undefined {
+    return this.currentToken;
+  }
+
+  /** 二次开发点⑬: 获取内容授权（/api/mango/rights，DRM key 解包协议） */
+  public async fetchRights(contentId: string, contentType = "clip"): Promise<{ key: string; iv: string; glt?: string }> {
+    await this.keepAlive(false);
+    const resp = await this.client.post(
+      `${SunoApi.BASE_URL}/api/mango/rights`,
+      { content_params: { content_id: contentId, content_type: contentType } },
+    );
+    if (resp.status !== 200) throw new Error(`License server returned ${resp.status}`);
+    return resp.data as { key: string; iv: string; glt?: string };
+  }
+
   public async get_credits(): Promise<object> {
     await this.keepAlive(false);
     const response = await this.client.get(

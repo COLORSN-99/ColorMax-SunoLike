@@ -46,7 +46,7 @@ export const SongResultSchema = z.object({
   audioUrl: z.string(),
   coverUrl: z.string().optional(),
   durationSec: z.number(),
-  sourceFormat: z.enum(["mp3", "wav", "flac"]),
+  sourceFormat: z.enum(["mp3", "wav", "flac", "m4a"]),
 });
 export type SongResult = z.infer<typeof SongResultSchema>;
 
