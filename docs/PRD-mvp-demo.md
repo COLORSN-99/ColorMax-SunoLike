@@ -31,7 +31,7 @@
 | 项 | 选型 |
 |---|---|
 | Agent 框架 | LangGraph（@langchain/langgraph JS）——Leader 编排图 + Subagent 节点 + 评判条件边重派 |
-| Suno 调用 | 自托管 gcui-art/suno-api（REST + cookie 会话 + CLI 轮询；LGPL-3.0 独立服务集成）；开发期 MockAdapter 兜底（**验收/演示走 SunoAdapter 真实链路**） |
+| Suno 调用 | **vendor gcui-art/suno-api 源码 + 本地二次开发**（packages/suno-gateway：cookie 会话池轮换/失效剔除、fail-fast CAPTCHA、transport 可注入、轮询上限可配；LGPL-3.0 保留许可+修改声明）；开发期 MockAdapter 兜底（**验收/演示走 SunoAdapter 真实链路**） |
 | 前端 chat UI | Vercel AI SDK（ai-chatbot 模板/shadcn 基座），按官方方式拉取到本地集成扩展 |
 | LLM | **OpenAI 兼容接口 + 设置面板（无 JSON mock）**：Base URL / API Key / Model / 温度，按角色（意图/规划/评判）可分别配置 |
 
@@ -46,7 +46,7 @@
 ## 5. 交付物（M3 完成标准）
 
 1. 仓库可运行：README 10 分钟启动（LLM 面板配置 + suno-api 服务启动 + cookie 配置）
-2. 验收脚本 = 完整链路（输入→意图→规划→LangGraph 调度 Suno→回传→Leader 对齐评判→下载源格式音频）——以 TECH-SPEC §11.5 **E2E-1** 为载体（演示前手动执行）
+2. 验收脚本 = 完整链路（输入→意图→规划→LangGraph 调度 Suno（本地 vendor gateway，`SUNO_COOKIES`）→回传→Leader 对齐评判→下载源格式音频）——以 TECH-SPEC §11.5 **E2E-1** 为载体（演示前手动执行）
 3. 评判报告界面可见（对齐维度/评分/重派记录）
 4. 同输入可复现（固定规划种子）
 5. **冒烟测试通过（§11.4 SM-1/2/3）+ 全套 E2E（§11.5）**——任何演示/交付前前置检查

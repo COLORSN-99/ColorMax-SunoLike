@@ -17,8 +17,8 @@
 └──────────────┬──────────────────────────────────────────────┘   └───────────┬───────────┘
                │ drizzle (SQLite: sessions/messages/jobs/songs)                │ HTTP(REST)
                └───────────────────────────────────────────────────────────────┘
-                                  suno-api 服务（自托管 Next.js, SUNO_COOKIE env）
-                                  POST /api/custom_generate · GET /api/get?ids · /api/get_limit
+                                  packages/suno-gateway（vendor 源码二次开发, 本地库调用）
+                                  配额预检→custom_generate→feed 轮询→源格式下载（cookie 会话池）
 ```
 
 ## 2. LangGraph 编排（packages/agents）
@@ -64,8 +64,9 @@ Job          { id; sessionId; phase: 'intent'|'plan'|'dispatch'|'suno'|'align'|'
 | `GET /api/jobs/:id/result` | 交付：AlignedSong + JudgeReport |
 | `GET /api/songs/:jobId/download` | 下载 Suno 源格式音频（透传，不转码） |
 
-内部 `packages/engine` 对 suno-api 的调用映射（SunoAdapter）：
-`quota: GET /api/get_limit` → `generate: POST /api/custom_generate {prompt, title, tags, lyrics}` → `poll: GET /api/get?ids=...`（间隔 5s，超时 5min）→ `download: audioUrl`（直链保存，源格式）。
+内部 Suno 接入（2026-08-30 用户拍板：**vendor gcui-art/suno-api 源码本地二次开发**，非远程 HTTP 调独立服务）：
+`packages/suno-gateway`：vendor `SunoApi.ts`/`utils.ts`（LGPL-3.0 保留许可+修改声明），二次开发点 = ①移除浏览器/CAPTCHA 重依赖（rebrowser/2captcha/ghost-cursor）→ fail-fast `CaptchaRequiredError`（CookiePool 轮换/人工）②HTTP transport 可注入（测试/代理）③常量 UA ④logger 控制台化 ⑤wait_audio 轮询上限可配（默认 5min）⑥cookie 会话池（轮换+失效剔除，≥2 次失败剔出）。
+`SunoGatewayAdapter.render` = 配额预检（`/api/billing/info/` get_credits）→ `custom_generate`（lyrics+创作约束 prompt，tags=风格/调性/节奏型+和弦走向，wait_audio 内部轮询）→ feed 兜底对齐 `complete` → 源格式直链下载（经注入 transport，不转码）。
 
 ## 5. LLM 设置面板（无 mock 契约）
 
@@ -91,8 +92,7 @@ Job          { id; sessionId; phase: 'intent'|'plan'|'dispatch'|'suno'|'align'|'
 
 ```
 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL（默认 openai 兼容本地）
-SUNO_API_BASE=https://localhost:3001   # suno-api 服务
-SUNO_API_COOKIE=…                       #（或由 suno-api 服务自身 .env 管理，本仓不存）
+SUNO_COOKIES=…                          # cookie 会话池（分号分隔多 cookie；本地 vendor 二次开发，无独立服务）
 ```
 
 ## 10. 实现层次（Stage 分层：按需求拆分的优先实现层次）
@@ -119,11 +119,12 @@ SUNO_API_COOKIE=…                       #（或由 suno-api 服务自身 .env 
 
 ### Stage 3 ｜ 出歌交付层（Suno 真实链路 + 源格式下载） — P0
 
-- **Step 3.1** `SunoAdapter`：suno-api 自托管接入（`SUNO_API_BASE`）、cookie 配置与配额预检（`/api/get_limit`）、`custom_generate`（计划驱动：title/tags/lyrics）、`/api/get?ids` 轮询（5s×≤5min）、源格式音频保存（不转码）
-- **Step 3.2** 交付页：音频播放 + **下载（Suno 源格式）** + 创作记录 + 评判报告归档（songs 表落库）
-- **Step 3.3** 验收脚本/检查单（完整链路 E2E + 风控降级路径：cookie 失效→failed 提示）
+- **Step 3.1** `packages/suno-gateway`：vendor gcui-art/suno-api 源码（`SunoApi.ts`/`utils.ts`+LGPL 许可）+ 二次开发（fail-fast CAPTCHA/transport 注入/cookie 会话池/轮询上限可配）
+- **Step 3.2** `SunoGatewayAdapter`（engine `SunoAdapter` 包装）：配额预检 → `custom_generate` → 轮询对齐 → **源格式直链下载保存（不转码）**；`SUNO_COOKIES` 池配多账号轮换
+- **Step 3.3** 交付页：音频播放 + **下载（Suno 源格式）** + 创作记录 + 评判报告归档（songs 表落库）
+- **Step 3.4** 验收脚本/检查单（完整链路 E2E + 风控降级：CAPTCHA/配额/cookie 失效→failed 提示）
 - **验收**：完整链路通过，交付可下载源格式音频（PRD 验收标准 4 条）
-- 依赖：Stage 2（engine 接口/图）+ suno-api 服务上线
+- 依赖：Stage 2（engine 接口/图）+ `SUNO_COOKIES` 会话（无独立服务进程）
 
 ### Stage 4 ｜ 产品壳与稳态（P1，验收后按需） — P1
 
