@@ -239,6 +239,11 @@ export default function Studio() {
             </div>
           )}
 
+          {tab === "board" ? (
+            <div style={{ flex: 1, overflow: "auto", padding: 20 }}>
+              <SongsBoard />
+            </div>
+          ) : (
           <div ref={logRef} style={{ flex: 1, overflow: "auto", padding: 20 }}>
             {msgs.length === 0 ? (
               <Welcome
@@ -325,6 +330,9 @@ export default function Studio() {
               </Card>
             )}
           </div>
+
+          </div>
+          )}
 
           <div style={{ padding: "12px 20px 20px", borderTop: "1px solid #242428" }}>
             <Sender
