@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import {
   readSettings,
   writeSettings,
@@ -102,4 +103,18 @@ test("S1-T2c extractJson：围栏与前后噪音", () => {
   assert.deepEqual(extractJson('```json\n{"a":1}\n```'), { a: 1 });
   assert.deepEqual(extractJson('前置 {"b":2} 后置'), { b: 2 });
   assert.throws(() => extractJson("无 json"));
+});
+
+test("S1-T1d 写入不覆盖其他键（SUNO_COOKIES 保留）", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cm-llm2-"));
+  const envPath = join(dir, ".env.local");
+  try {
+    writeFileSync(envPath, "SUNO_COOKIES=cookie-secret-line\nLLM_BASE_URL=old\n", "utf-8");
+    writeSettings({ baseURL: "http://x/v1", apiKey: "k", model: "m", temperature: 0.2 }, envPath);
+    const s = readFileSync(envPath, "utf-8");
+    assert.ok(s.includes("SUNO_COOKIES=cookie-secret-line"), "用户配置保留");
+    assert.ok(s.includes("LLM_BASE_URL=http://x/v1"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -40,16 +40,28 @@ export function readSettings(envPath = SETTINGS_FILE): LlmSettings {
   };
 }
 
-/** 设置写入 .env.local（不入库；Next dev 需重启加载，API 侧读取由本函数即时生效） */
+/** 设置写入 .env.local（增量合并：只更新 LLM_* 键，保留其他行（如 SUNO_COOKIES）——防覆盖用户配置） */
 export function writeSettings(settings: LlmSettings, envPath = SETTINGS_FILE): void {
-  const lines = [
-    `LLM_BASE_URL=${settings.baseURL}`,
-    `LLM_API_KEY=${settings.apiKey}`,
-    `LLM_MODEL=${settings.model}`,
-    `LLM_TEMPERATURE=${settings.temperature}`,
-    "",
-  ];
-  writeFileSync(envPath, lines.join("\n"), "utf-8");
+  const updates: Record<string, string> = {
+    LLM_BASE_URL: settings.baseURL,
+    LLM_API_KEY: settings.apiKey,
+    LLM_MODEL: settings.model,
+    LLM_TEMPERATURE: String(settings.temperature),
+  };
+  const existing = existsSync(envPath) ? readFileSync(envPath, "utf-8").split("\n") : [];
+  const seen = new Set<string>();
+  const out = existing.map((line) => {
+    const m = line.match(/^\s*([A-Z_0-9]+)=/);
+    if (m && updates[m[1]] !== undefined) {
+      seen.add(m[1]);
+      return `${m[1]}=${updates[m[1]]}`;
+    }
+    return line;
+  });
+  for (const [k, v] of Object.entries(updates)) {
+    if (!seen.has(k)) out.push(`${k}=${v}`);
+  }
+  writeFileSync(envPath, out.join("\n"), "utf-8");
 }
 
 /** 校验设置可用性（非空+可解析） */

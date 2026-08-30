@@ -1,3 +1,4 @@
+export * from "./proxy.ts";
 export * from "./pool.ts";
 export * from "./adapter.ts";
 export { sunoApi, CaptchaRequiredError, DEFAULT_MODEL } from "../vendor/SunoApi.ts";

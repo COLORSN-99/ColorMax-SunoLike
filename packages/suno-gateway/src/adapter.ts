@@ -2,6 +2,8 @@ import { writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AxiosInstance } from "axios";
+import axios from "axios";
+import { detectSystemProxy } from "./proxy.ts";
 import { sunoApi, CaptchaRequiredError, DEFAULT_MODEL } from "../vendor/SunoApi.ts";
 import { CookiePool } from "./pool.ts";
 
@@ -44,6 +46,16 @@ export class SunoGatewayAdapter {
     this.opts = opts;
   }
 
+  /** 默认 transport：自动注入系统代理（浏览器可达但直连被墙的场景） */
+  private transport(): AxiosInstance {
+    if (this.opts.transport) return this.opts.transport;
+    const proxy = detectSystemProxy();
+    return axios.create({
+      timeout: 15_000,
+      ...(proxy ? { proxy: { host: proxy.host, port: proxy.port, protocol: "http" } } : {}),
+    });
+  }
+
   async render(req: SunoRenderRequest): Promise<SunoRenderResult> {
     const pool = new CookiePool(this.opts.cookies);
     let lastErr: unknown;
@@ -67,7 +79,7 @@ export class SunoGatewayAdapter {
 
   private async tryRender(cookie: string, req: SunoRenderRequest): Promise<SunoRenderResult> {
     const api = await sunoApi(cookie, {
-      transport: this.opts.transport,
+      transport: this.transport(),
       waitAudioMs: this.opts.waitAudioMs,
     });
     // 配额预检（get_limit 等价：/api/billing/info/）
@@ -114,12 +126,7 @@ export class SunoGatewayAdapter {
   }
 
   private async download(url: string): Promise<Buffer> {
-    if (this.opts.transport) {
-      const res = await this.opts.transport.get(url, { responseType: "arraybuffer" });
-      return Buffer.from(res.data as ArrayBuffer);
-    }
-    const res = await fetch(url, { headers: { "User-Agent": "colormax/0.1" } });
-    if (!res.ok) throw new Error(`音频下载失败 HTTP ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+    const res = await this.transport().get(url, { responseType: "arraybuffer" });
+    return Buffer.from(res.data as ArrayBuffer);
   }
 }
