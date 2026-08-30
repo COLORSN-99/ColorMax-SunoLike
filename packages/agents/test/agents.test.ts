@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { alignSong, ruleChecks, judgeSong, runAgent, jobStore, type JobEvent } from "../src/index.ts";
+import { repairPlan } from "../src/oracles.ts";
 import { MockAdapter } from "@colormax/engine";
 import type { CreationPlan, SongResult, JudgeReport } from "@colormax/schema";
 
@@ -154,4 +155,18 @@ test("S2-T5 jobs 状态机：事件序列 + done；LLM 失败 → failed", async
     await m.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("S2-T7 输出契约兜底：超量段落截断/clamp/缺失默认（真实 LLM 超界场景）", () => {
+  const raw = {
+    title: "T",
+    intent: { theme: "a", mood: "b", style: "c", durationSec: 9999 },
+    structure: Array.from({ length: 14 }, (_, i) => ({ name: "verse", lyrics: `v${i}` })),
+    arrangement: { key: "C", bpm: 500, chordProgression: [], groove: "pop" },
+    seed: 1,
+  };
+  const repaired = repairPlan(raw);
+  assert.equal((repaired.structure as unknown[]).length, 12);
+  assert.equal((repaired.arrangement as any).bpm, 240);
+  assert.deepEqual(repaired.arrangement.chordProgression, ["C", "G", "Am", "F"]);
 });

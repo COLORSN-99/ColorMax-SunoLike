@@ -22,7 +22,7 @@ export type SongSection = z.infer<typeof SongSectionSchema>;
 export const CreationPlanSchema = z.object({
   intent: IntentSchema,
   title: z.string().min(1),
-  structure: z.array(SongSectionSchema).min(2).max(8),
+  structure: z.array(SongSectionSchema).min(2).max(12),
   arrangement: z.object({
     key: z.string().min(1).describe("调性"),
     bpm: z.number().int().min(40).max(240).describe("速度"),
