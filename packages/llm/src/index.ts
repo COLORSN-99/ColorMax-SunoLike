@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
+import JSON5 from "json5";
 
 /** LLM 设置（DeepSeek 官方接入字段集：provider/BaseURL/APIKey/API 格式/Model/max_tokens/temperature/thinking） */
 export type ApiFormat = "openai" | "anthropic";
@@ -207,14 +208,44 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** 从对话内容中提取 JSON（容忍 ```json 围栏与前后噪音） */
+/**
+ * 宽松 JSON 解析（真实 LLM 偶发畸形输出：尾逗号/单引号/缺逗号/注释/控制字符）：
+ * 先正统 → 常见破损预修复 → JSON5 宽松（尾逗号/单引号/注释/无引号 key）
+ */
+export function parseJsonLoose<T>(raw: string): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    /* fallthrough */
+  }
+  let fixed = raw
+    // 剥离 // 行注释与 /* */ 块注释（仅引号外可靠场景——做保守版：先处理最普遍后置情况）
+    .replace(/\\[rnt]/g, " ")
+    .replace(/([\w\]}\"'])[\s\n]+([\[{\"'])/g, "$1,$2") // 相邻元素缺逗号
+    .replace(/,\s*([}\]])/g, "$1"); // 尾逗号
+  try {
+    return JSON.parse(fixed) as T;
+  } catch {
+    /* fallthrough */
+  }
+  return JSON5.parse(raw) as T;
+}
+
+/** 从对话内容中提取 JSON（容忍 ```json 围栏、前后噪音、与轻度语法破损） */
 export function extractJson<T>(text: string): T {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   const raw = fenced ? fenced[1] : text;
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("响应中未找到 JSON");
-  return JSON.parse(raw.slice(start, end + 1)) as T;
+  const body = raw.slice(start, end + 1);
+  try {
+    return parseJsonLoose<T>(body);
+  } catch (e) {
+    throw new Error(
+      "模型输出 JSON 无法解析：" + (e instanceof Error ? e.message.slice(0, 120) : String(e)),
+    );
+  }
 }
 
 export const stableInt = (s: string, max: number): number => {

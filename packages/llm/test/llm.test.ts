@@ -12,6 +12,7 @@ import {
   chatCompletion,
   extractJson,
   testConnection,
+  parseJsonLoose,
   DEFAULT_SETTINGS,
 } from "../src/index.ts";
 
@@ -155,4 +156,13 @@ test("S1-T2e 测试连接 ok/失败", async () => {
   const ok = await testConnection({ ...DEFAULT_SETTINGS, baseURL: "http://127.0.0.1:9/v1", apiKey: "" });
   assert.equal(ok.ok, false);
   assert.ok(ok.error);
+});
+
+test("S1-T2f 宽松解析：尾逗号/单引号/缺逗号/注释 → 修复成功", () => {
+  assert.deepEqual(parseJsonLoose('{"a":1,}'), { a: 1 });
+  assert.deepEqual(parseJsonLoose("{'a': 2}"), { a: 2 });
+  assert.deepEqual(parseJsonLoose('{"a":1 "b":2}'), { a: 1, b: 2 });
+  assert.deepEqual(parseJsonLoose('{"a":1,/*x*/ "b":3}'), { a: 1, b: 3 });
+  assert.deepEqual(parseJsonLoose('{"arr":["x" "y"]}'), { arr: ["x", "y"] });
+  assert.deepEqual(parseJsonLoose('{ // comment\n "a": 5 }'), { a: 5 });
 });

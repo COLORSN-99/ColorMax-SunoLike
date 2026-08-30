@@ -88,23 +88,23 @@ export async function createPlan(
   intent: Intent,
 ): Promise<CreationPlan> {
   const seed = stableInt(prompt, 1_000_000);
-  const raw = await extractJson<Record<string, unknown>>(
-    (
-      await chatCompletion(settings, [
-        {
-          role: "system",
-          content:
-            "你是音乐创作编导。基于意图输出创作计划 JSON：" +
-            '{"title":string,"structure":[{"name":"intro|verse|preChorus|chorus|bridge|outro","lyrics":string}]' +
-            '（structure 数组 2 到 12 段）,"arrangement":{"key":string,"bpm":number(40-240),"chordProgression":string[](非空),' +
-            '"groove":string}}。**严格遵守边界**：structure 不超过 12 段、bpm 40-240、chordProgression 至少一个和弦。' +
-            `意图：${JSON.stringify(intent)}。仅输出 JSON。`,
-        },
-        { role: "user", content: prompt },
-      ])
-    ).text,
-  );
   try {
+    const raw = await extractJson<Record<string, unknown>>(
+      (
+        await chatCompletion(settings, [
+          {
+            role: "system",
+            content:
+              "你是音乐创作编导。基于意图输出创作计划 JSON：" +
+              '{"title":string,"structure":[{"name":"intro|verse|preChorus|chorus|bridge|outro","lyrics":string}]' +
+              '（structure 数组 2 到 12 段）,"arrangement":{"key":string,"bpm":number(40-240),"chordProgression":string[](非空),' +
+              '"groove":string}}。**严格遵守边界**：structure 不超过 12 段、bpm 40-240、chordProgression 至少一个和弦。' +
+              `意图：${JSON.stringify(intent)}。仅输出 JSON。`,
+          },
+          { role: "user", content: prompt },
+        ])
+      ).text,
+    );
     return planParse({ ...raw, intent, seed });
   } catch (firstErr) {
     // 兜底①：契约修复（clamp/截断/默认）后重试解析
