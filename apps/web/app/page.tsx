@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import Link from "next/link";
-import { ConfigProvider, theme, Layout, Card, Tag, List, Typography, Steps } from "antd";
+import { ConfigProvider, theme, Layout, Card, Tag, List, Typography, Steps, Alert } from "antd";
 import { Bubble, Sender, Conversations, Welcome } from "@ant-design/x";
 import { SERVICE_MARKET, PLUGIN_MARKET } from "./data/market";
 
@@ -30,6 +30,22 @@ interface SongResult {
 }
 interface AlignedResult {
   song: SongResult;
+}
+
+interface FriendlyErr {
+  kind: "llm" | "cookie" | "quota" | "generic";
+  title: string;
+  tips: string[];
+}
+
+function friendlyError(msg: string): FriendlyErr {
+  if (/fetch failed|ECONNREFUSED|ETIMEDOUT|network/i.test(msg))
+    return { kind: "llm", title: "LLM 端点不可达", tips: ["请到「LLM 设置」页配置可用的 OpenAI 兼容端点（Base URL / Model / Key）", "本地端点示例：http://localhost:11434/v1（Ollama）"] };
+  if (/CAPTCHA/i.test(msg))
+    return { kind: "cookie", title: "Suno 风控验证（CAPTCHA）", tips: ["Suno 触发了人机验证：请在浏览器打开 suno.com/create 完成一次生成（人工过验证）", "或到 apps/web/.env.local 更换新的 SUNO_COOKIES（多账号可用 || 分隔）后重启服务", "短期高频生成会触发风控，建议间隔后再试"] };
+  if (/配额|quota|SunoQuota/i.test(msg))
+    return { kind: "quota", title: "Suno 配额不足", tips: ["到 Suno 账号检查剩余 credits（当前配额 2450/月）", "等待配额恢复或更换账号 cookie"] };
+  return { kind: "generic", title: "任务执行失败", tips: ["查看服务端日志 /tmp/cm_web.log 定位原因", "重试（生成风控时建议间隔几分钟）"] };
 }
 
 function CodexShell({ children }: { children: React.ReactNode }) {
@@ -141,7 +157,8 @@ export default function Studio() {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
+      const fe = friendlyError(msg);
+      setError(fe.title);
       setMsgs((m) => [...m, { role: "assistant", content: `错误：${msg}` }]);
     } finally {
       setBusy(false);
@@ -240,7 +257,26 @@ export default function Studio() {
               />
             )}
 
-            {error && <div style={{ color: "#ff7875", marginTop: 8 }}>错误：{error}</div>}
+            {error && (
+        <Alert
+          style={{ marginTop: 8 }}
+          type="error"
+          showIcon
+          message={error}
+          description={
+            <ul style={{ margin: "4px 0 0", paddingLeft: 16, fontSize: 12 }}>
+              {friendlyError(error).tips.map((t, i) => (
+                <li key={i}>
+                  {t}{" "}
+                  {friendlyError(error).kind === "llm" && (
+                    <Link href="/settings"><span style={{ color: "#6a6acd" }}>打开 LLM 设置 ↗</span></Link>
+                  )}
+                </li>
+              ))}
+            </ul>
+          }
+        />
+      )}
 
             {planView && (
               <Card size="small" style={{ marginTop: 12, background: "#141417", borderColor: "#2a2a2e" }}

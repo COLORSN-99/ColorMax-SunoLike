@@ -11,6 +11,7 @@ import {
   validateSettings,
   chatCompletion,
   extractJson,
+  testConnection,
   DEFAULT_SETTINGS,
 } from "../src/index.ts";
 
@@ -117,4 +118,41 @@ test("S1-T1d 写入不覆盖其他键（SUNO_COOKIES 保留）", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("S1-T2d Anthropic Message 兼容：/messages + x-api-key + content[].text", async () => {
+  let captured: { url: string; headers: Record<string, string>; body: Record<string, unknown> } | null = null;
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      captured = { url: req.url ?? "", headers: req.headers as Record<string, string>, body: JSON.parse(body) };
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ content: [{ type: "text", text: '{"ok":1}' }] }));
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, r));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const result = await chatCompletion(
+      { ...DEFAULT_SETTINGS, baseURL: `http://127.0.0.1:${port}/anthropic`, apiFormat: "anthropic", apiKey: "sk-ant", model: "deepseek-v4-flash", maxTokens: 512 },
+      [{ role: "system", content: "sys" }, { role: "user", content: "hi" }],
+    );
+    assert.equal(result.text, '{"ok":1}');
+    assert.ok(captured!.url.endsWith("/anthropic/messages"));
+    assert.equal(captured!.headers["x-api-key"], "sk-ant");
+    assert.ok(captured!.headers["anthropic-version"]);
+    assert.equal(captured!.body.model, "deepseek-v4-flash");
+    assert.equal(captured!.body.max_tokens, 512);
+    assert.equal(captured!.body.system, "sys");
+    assert.equal((captured!.body.messages as unknown[]).length, 1);
+  } finally {
+    server.close();
+  }
+});
+
+test("S1-T2e 测试连接 ok/失败", async () => {
+  const ok = await testConnection({ ...DEFAULT_SETTINGS, baseURL: "http://127.0.0.1:9/v1", apiKey: "" });
+  assert.equal(ok.ok, false);
+  assert.ok(ok.error);
 });

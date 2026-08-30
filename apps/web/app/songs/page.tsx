@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ConfigProvider, theme, Layout, Card, Tag, List, Typography } from "antd";
+import { ConfigProvider, theme, Layout, Card, Tag, List, Typography, Alert } from "antd";
 
 const { Content } = Layout;
 const { Text } = Typography;
@@ -21,6 +21,7 @@ interface Song {
 export default function Songs() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [errId, setErrId] = useState<string | null>(null);
   useEffect(() => {
     fetch("/api/songs").then((r) => r.json()).then((d) => {
       if (d.error) setError(d.error);
@@ -64,7 +65,21 @@ export default function Songs() {
                     </Text>
                   </div>
                   <div style={{ marginTop: 6 }}>
-                    <audio controls src={`/api/songs/${s.id}/audio`} style={{ width: "100%", height: 30 }} />
+                    <audio
+                      controls
+                      src={`/api/songs/${s.id}/audio`}
+                      style={{ width: "100%", height: 30 }}
+                      onError={() => setErrId(s.id)}
+                    />
+                    {errId === s.id && (
+                      <Alert
+                        style={{ marginTop: 6 }}
+                        type="warning"
+                        showIcon
+                        message="音频加载失败（首次加载需等待转码或检查会话）"
+                        description={<span style={{ fontSize: 12 }}>首次请求会解密并转码（约 10 秒），稍后刷新重试即可；仍失败时检查 SUNO_COOKIES 与会话有效性。</span>}
+                      />
+                    )}
                     <div style={{ marginTop: 6, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                       <span className="label">时长 {s.durationSec} · {s.model} · DRM 解密同源播放</span>
                       <a href={s.audioUrl} target="_blank" rel="noreferrer" style={{ color: "#6a6acd", fontSize: 12 }}>
