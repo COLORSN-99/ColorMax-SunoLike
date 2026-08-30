@@ -82,6 +82,7 @@ export default function Studio() {
     { key: "s2", label: "摇滚风格的毕业告别歌" },
   ]);
   const [active, setActive] = useState("s1");
+  const [tab, setTab] = useState("studio");
   const logRef = useRef<HTMLDivElement>(null);
   const lines = useRef<string[]>([]);
 
