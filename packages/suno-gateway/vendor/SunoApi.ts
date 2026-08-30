@@ -211,16 +211,6 @@ class SunoApi {
     return resp.data.required;
   }
 
-  private getBrowserType() {
-    const browser = process.env.BROWSER?.toLowerCase();
-    switch (browser) {
-      case 'firefox':
-        return firefox;
-      default:
-        return chromium;
-    }
-  }
-
   /**
    * Launches a browser with the necessary cookies
    * @returns {BrowserContext}

@@ -13,7 +13,7 @@ export interface RenderRequest {
 
 export interface RenderResult {
   audioUrl: string;      // 相对可下载 URL（如 /generated/xxx.wav）
-  sourceFormat: "wav" | "mp3";
+  sourceFormat: "wav" | "mp3" | "flac";
   durationSec: number;
   raw: Record<string, unknown>;
 }
@@ -116,3 +116,5 @@ function encodeWav(samples: number[], sampleRate: number): Buffer {
   }
   return buf;
 }
+
+export { SunoAdapter } from "./suno.ts";
