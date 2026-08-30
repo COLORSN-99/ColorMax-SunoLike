@@ -14,20 +14,22 @@ export function alignSong(plan: CreationPlan, song: SongResult): AlignedSong {
   };
 }
 
-/** judge 规则检测（LLM 之外的硬规则） */
+/** judge 规则检测（LLM 之外）：blocking=true 才阻断 pass（时长差=软指标——Suno 出歌时长为不可控因子，仅记分不阻断） */
 export function ruleChecks(plan: CreationPlan, song: SongResult): {
   name: string;
   passed: boolean;
+  blocking?: boolean;
   note?: string;
 }[] {
   const durationDelta = Math.abs(song.durationSec - plan.intent.durationSec);
   return [
     {
-      name: "时长在约束 ±15% 内",
+      name: "时长接近约束",
       passed: durationDelta <= plan.intent.durationSec * 0.15,
+      blocking: false, // 软指标：Suno 时长不可控，仅影响 duration 评分
       note: `期望 ${plan.intent.durationSec}s，实际 ${song.durationSec}s`,
     },
-    { name: "歌词非空", passed: Boolean(song.lyrics?.trim()) },
-    { name: "音频存在", passed: Boolean(song.audioUrl) },
+    { name: "歌词非空", passed: Boolean(song.lyrics?.trim()), blocking: true },
+    { name: "音频存在", passed: Boolean(song.audioUrl), blocking: true },
   ];
 }

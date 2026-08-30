@@ -51,8 +51,13 @@ test("S2-T2 judge 阈值与规则：3.5→pass / 3.4→retry；规则失败强�
   const ruleFail = await judgeSong(
     { settings: {} as never, judgeOverride: async () => ({ ...base, score: 5 }) },
     alignSong(PLAN, { ...SONG, durationSec: 300, audioUrl: "" }), 0);
-  assert.equal(ruleFail.verdict, "retry");
+  assert.equal(ruleFail.verdict, "retry"); // 音频缺失=blocking 失败
   assert.ok(ruleFail.rules.length >= 3);
+  // 时长差 40%：软指标——高语义分下应通过（时长只降 duration 分，不阻断）
+  const softDuration = await judgeSong(
+    { settings: {} as never, judgeOverride: async () => ({ ...base, score: 4.1 }) },
+    alignSong(PLAN, { ...SONG, durationSec: 170 }), 0);
+  assert.equal(softDuration.verdict, "pass", "时长偏差为软指标：4.1 分应通过");
 });
 
 test("S2-T3 重派回环：首轮 retry → 二次 pass", async () => {

@@ -24,7 +24,7 @@ export async function judgeSong(
       ...rep,
       rules,
       retried,
-      verdict: rep.score >= PASS_THRESHOLD && rules.every((r) => r.passed) ? "pass" : "retry",
+      verdict: rep.score >= PASS_THRESHOLD && rules.filter((r) => r.blocking).every((r) => r.passed) ? "pass" : "retry",
     };
   }
 
@@ -41,14 +41,14 @@ export async function judgeSong(
   const score = round1(
     (perDimension.theme * weighted.theme + perDimension.mood * weighted.mood + perDimension.style * weighted.style + perDimension.duration * weighted.duration + perDimension.structure * weighted.structure),
   );
-  const passedRules = rules.every((r) => r.passed);
+  const blockingPassed = rules.filter((r) => r.blocking).every((r) => r.passed);
   return {
     score,
     perDimension,
     comment: dims.comment,
     rules,
     retried,
-    verdict: score >= PASS_THRESHOLD && passedRules ? "pass" : "retry",
+    verdict: score >= PASS_THRESHOLD && blockingPassed ? "pass" : "retry",
   };
 }
 
