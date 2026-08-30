@@ -5,3 +5,5 @@ dist/
 .env.local
 *.log
 .DS_Store
+apps/web/public/generated/
+apps/web/public/decode-test.m4a

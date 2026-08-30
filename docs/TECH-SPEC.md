@@ -66,7 +66,7 @@ Job          { id; sessionId; phase: 'intent'|'plan'|'dispatch'|'suno'|'align'|'
 
 内部 Suno 接入（2026-08-30 用户拍板：**vendor gcui-art/suno-api 源码本地二次开发**，非远程 HTTP 调独立服务）：
 `packages/suno-gateway`：vendor `SunoApi.ts`/`utils.ts`（LGPL-3.0 保留许可+修改声明），二次开发点 = ①移除浏览器/CAPTCHA 重依赖（rebrowser/2captcha/ghost-cursor）→ fail-fast `CaptchaRequiredError`（CookiePool 轮换/人工）②HTTP transport 可注入（测试/代理）③常量 UA ④logger 控制台化 ⑤wait_audio 轮询上限可配（默认 5min）⑥cookie 会话池（轮换+失效剔除，≥2 次失败剔出）。
-`SunoGatewayAdapter.render` = 配额预检（`/api/billing/info/` get_credits）→ `custom_generate`（lyrics+创作约束 prompt，tags=风格/调性/节奏型+和弦走向，**strict-complete** 轮询——原版把 streaming 当完成是缺陷）→ feed 对齐 `complete` → **`/api/clip/{id}` 详情取 media_urls 真实源链（feed 的 audio_url=api/forbidden 旧占位）** → **AudioDelivery=suno-session 交付**（不转码；Suno 对跨站/自动化媒体获取 policy 封锁：cdn1 socket-hangup / cloudfront 服务器出口返回占位 blob——**查收/播放经 Suno 会话（官方面板）完成**，Studio 交付卡=面板入口+源链接+复制）。
+`SunoGatewayAdapter.render` = 配额预检（`/api/billing/info/` get_credits）→ `custom_generate`（lyrics+创作约束 prompt，tags=风格/调性/节奏型+和弦走向，**strict-complete** 轮询——原版把 streaming 当完成是缺陷）→ feed 对齐 `complete` → **`/api/clip/{id}` 详情取 media_urls 真实源链（feed 的 audio_url=api/forbidden 旧占位）** → **AudioDelivery=server-decrypt-transcode**（2026-08-30 逆向后定版）：下载密文（`media_urls` 直链，feed 的 audio_url=api/forbidden 是旧占位）→ **DRM 解密（逆向自 suno.com bundle：`userKey=SHA-256(JWT)` AES-GCM → `POST /api/mango/rights`(Bearer JWT) → key/iv 以 contentId 为 additionalData GCM unwrap → AES-CTR 单次整批解密）** → **初次 mp4 明文直出（不劣化）+ 后台 ffmpeg 转 MP3 缓存**（`/api/songs/:id/audio`：audio/mpeg + Range/Content-Length + 磁盘缓存 + 预热）——全浏览器兼容。
 
 ## 5. LLM 设置面板（无 mock 契约）
 
@@ -119,10 +119,10 @@ SUNO_COOKIES=…                          # cookie 会话池（分号分隔多 c
 
 ### Stage 3 ｜ 出歌交付层（Suno 真实链路 + 源格式下载） — P0
 
-- **Step 3.1** `packages/suno-gateway`：vendor gcui-art/suno-api 源码（`SunoApi.ts`/`utils.ts`+LGPL 许可）+ 二次开发（fail-fast CAPTCHA/transport 注入/cookie 会话池/轮询上限可配）
-- **Step 3.2** `SunoGatewayAdapter`（engine `SunoAdapter` 包装）：配额预检 → `custom_generate` → 轮询对齐 → **源格式直链下载保存（不转码）**；`SUNO_COOKIES` 池配多账号轮换
-- **Step 3.3** 交付页/作品页：**Suno 会话查收**（面板入口 + 源链接复制，AudioDelivery=suno-session——媒体获取 policy 封锁说明）+ 创作记录 + 评判报告归档
-- **Step 3.4** 验收脚本/检查单（完整链路 E2E + 风控降级：CAPTCHA/配额/cookie 失效→failed 提示；**验收标准**：真实生成 ✓+完成检测 ✓+对齐评判 ✓+源链交付（查收经 Suno 会话），服务器不自取媒体）
+- **Step 3.1** `packages/suno-gateway`：vendor gcui-art/suno-api 源码 + 二次开发（fail-fast CAPTCHA/transport 注入/cookie 会话池/轮询上限可配）✅；**3.1b DRM 解密链**（getJwt/fetchRights + decrypt.ts：rights unwrap + AES-CTR；D1/D2 自证）✅
+- **Step 3.2** `SunoGatewayAdapter`：配额预检 → `custom_generate` → **strict-complete 轮询** → feed 对齐 → **`/api/clip/{id}` 详情取 media_urls** → 下载密文 → **解密** → 交付（媒体已被 DRM，非"直接下载保存"）✅
+- **Step 3.3** 交付页/作品页：**同源播放端点** `/api/songs/:id/audio`（初次 mp4 直出 + 后台 ffmpeg MP3 缓存 + Range + 预热），播放+创作记录+评判报告 ✅；Studio 创作室交付卡 ⚠ 待接线（现为面板入口按钮）
+- **Step 3.4** 验收脚本/检查单：**已达成** 生成✓/完成检测✓/评判✓/**解密播放✓（12/12 MP3 缓存）**；**待补** = ①创作室单次"输入→…→本页播放"终验（生成风控冷却后跑）②Playwright E2E 基建（@e2e-suno/@e2e-mock）③S3-T2/T3 用例与现状对齐
 - **验收**：完整链路通过，交付可下载源格式音频（PRD 验收标准 4 条）
 - 依赖：Stage 2（engine 接口/图）+ `SUNO_COOKIES` 会话（无独立服务进程）
 
@@ -228,3 +228,16 @@ Stage 1 ──► Stage 2 ──► Stage 3 ──► Stage 4（P1）
 - suno 反爬/风控（hCaptcha）：依赖 suno-api 的 2Captcha/Playwright 方案，演示环境预配 cookie；接口变动时 adapter 隔离修复。
 - LGPL-3.0：suno-api 为独立服务进程（HTTP 集成），不静态链接，MIT 仓库边界清晰。
 - LLM 依赖：演示需可用 OpenAI 兼容端点（本地 Ollama 或云端 key）。
+
+
+## 12. 状态对账（2026-08-30）
+
+| Stage | 内容 | 状态 | 缺口 |
+|---|---|---|---|
+| Stage 1 输入与规划层 | 骨架/LLM 面板/意图规划（真实 LLM）/测试 S1 | ✅ 完成 | 前端组件单测（S1-T4 组件自动化）留 Stage 4 |
+| Stage 2 Agent 编排层 | LangGraph 图+align/judge+MockAdapter+jobs+SSE+前端进度/报告 | ✅ 完成（S2-T1~T5） | — |
+| Stage 3 出歌交付层 | vendor 二次开发/DRM 解密/同源播放端点（MP3 缓存+Range） | ✅ 主体完成（G1~G6 + D1/D2） | ①创作室单次真实出歌终验（生成风控冷却后）②Playwright E2E 基建 ③S3-T2/T3 用例对齐 |
+| Stage 4 产品壳（P1） | 创作记录列表/会话持久化/失败引导 UI/Mock 开关 UI/README 10 分钟/基础 e2e | ⚠ 部分：作品列表页✅（songs）；失败引导=报错文案⚠ | 会话持久化（sessions 内存态）：❌；Mock 开关 UI：❌；README 10 分钟启动：❌；Playwright 基测：❌ |
+| Stage 5 M4+（P2） | Stem/Studio/批量/工作流共享/插件化/Electron/资产库 | 不实现（PRD「不做」节） | —（路线预留） |
+
+**定版说明**：AudioDelivery 三阶段——suno-session（绕开）→ server-decrypt（解密失败表象）→ **server-decrypt-transcode**（最终：解密+转码双层缓存，解决 mp4/Opus 浏览器容器差异）。
