@@ -66,7 +66,7 @@ Job          { id; sessionId; phase: 'intent'|'plan'|'dispatch'|'suno'|'align'|'
 
 内部 Suno 接入（2026-08-30 用户拍板：**vendor gcui-art/suno-api 源码本地二次开发**，非远程 HTTP 调独立服务）：
 `packages/suno-gateway`：vendor `SunoApi.ts`/`utils.ts`（LGPL-3.0 保留许可+修改声明），二次开发点 = ①移除浏览器/CAPTCHA 重依赖（rebrowser/2captcha/ghost-cursor）→ fail-fast `CaptchaRequiredError`（CookiePool 轮换/人工）②HTTP transport 可注入（测试/代理）③常量 UA ④logger 控制台化 ⑤wait_audio 轮询上限可配（默认 5min）⑥cookie 会话池（轮换+失效剔除，≥2 次失败剔出）。
-`SunoGatewayAdapter.render` = 配额预检（`/api/billing/info/` get_credits）→ `custom_generate`（lyrics+创作约束 prompt，tags=风格/调性/节奏型+和弦走向，wait_audio 内部轮询）→ feed 兜底对齐 `complete` → 源格式直链下载（经注入 transport，不转码）。
+`SunoGatewayAdapter.render` = 配额预检（`/api/billing/info/` get_credits）→ `custom_generate`（lyrics+创作约束 prompt，tags=风格/调性/节奏型+和弦走向，**strict-complete** 轮询——原版把 streaming 当完成是缺陷）→ feed 对齐 `complete` → **`/api/clip/{id}` 详情取 media_urls 真实源链（feed 的 audio_url=api/forbidden 旧占位）** → **AudioDelivery=suno-session 交付**（不转码；Suno 对跨站/自动化媒体获取 policy 封锁：cdn1 socket-hangup / cloudfront 服务器出口返回占位 blob——**查收/播放经 Suno 会话（官方面板）完成**，Studio 交付卡=面板入口+源链接+复制）。
 
 ## 5. LLM 设置面板（无 mock 契约）
 
@@ -121,8 +121,8 @@ SUNO_COOKIES=…                          # cookie 会话池（分号分隔多 c
 
 - **Step 3.1** `packages/suno-gateway`：vendor gcui-art/suno-api 源码（`SunoApi.ts`/`utils.ts`+LGPL 许可）+ 二次开发（fail-fast CAPTCHA/transport 注入/cookie 会话池/轮询上限可配）
 - **Step 3.2** `SunoGatewayAdapter`（engine `SunoAdapter` 包装）：配额预检 → `custom_generate` → 轮询对齐 → **源格式直链下载保存（不转码）**；`SUNO_COOKIES` 池配多账号轮换
-- **Step 3.3** 交付页：音频播放 + **下载（Suno 源格式）** + 创作记录 + 评判报告归档（songs 表落库）
-- **Step 3.4** 验收脚本/检查单（完整链路 E2E + 风控降级：CAPTCHA/配额/cookie 失效→failed 提示）
+- **Step 3.3** 交付页/作品页：**Suno 会话查收**（面板入口 + 源链接复制，AudioDelivery=suno-session——媒体获取 policy 封锁说明）+ 创作记录 + 评判报告归档
+- **Step 3.4** 验收脚本/检查单（完整链路 E2E + 风控降级：CAPTCHA/配额/cookie 失效→failed 提示；**验收标准**：真实生成 ✓+完成检测 ✓+对齐评判 ✓+源链交付（查收经 Suno 会话），服务器不自取媒体）
 - **验收**：完整链路通过，交付可下载源格式音频（PRD 验收标准 4 条）
 - 依赖：Stage 2（engine 接口/图）+ `SUNO_COOKIES` 会话（无独立服务进程）
 

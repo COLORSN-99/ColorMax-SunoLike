@@ -16,7 +16,9 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@colormax/agents": "workspace:*",
-    "@colormax/engine": "workspace:*"
+    "@colormax/engine": "workspace:*",
+    "@colormax/suno-gateway": "workspace:*",
+    "axios": "^1.7.8"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

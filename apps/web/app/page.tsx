@@ -278,10 +278,12 @@ export default function Studio() {
             {result?.song && (
               <Card size="small" style={{ marginTop: 12, background: "#141417", borderColor: "#2a2a2e" }}
                 title={<Text style={{ fontSize: 12 }}>交付 · {result.song.title}（{result.song.durationSec}s · {result.song.sourceFormat}）</Text>}>
-                <audio controls src={result.song.audioUrl} style={{ width: "100%" }} />
-                <div style={{ marginTop: 8 }}>
-                  <a href={result.song.audioUrl} download style={{ color: "#6a6acd", fontSize: 13 }}>
-                    下载源格式音频 ↓
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <a href="https://suno.com/create" target="_blank" rel="noreferrer" style={{ color: "#6a6acd" }}>
+                    ▶ 去 Suno 面板查收（需已登录，Suno 对自动化/跨站播放有限制）
+                  </a>
+                  <a href={result.song.audioUrl} target="_blank" rel="noreferrer" style={{ color: "#6a6acd" }}>
+                    ↗ 源链接
                   </a>
                 </div>
               </Card>

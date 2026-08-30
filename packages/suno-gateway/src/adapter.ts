@@ -95,29 +95,30 @@ export class SunoGatewayAdapter {
     const [primary] = songs;
     if (!primary) throw new Error("Suno 未返回作品");
 
-    // 兜底轮询（wait_audio 内部已轮询到 waitAudioMs；此处以 feed 再对齐最终态）
+    // 兜底轮询（wait_audio 内部已轮询到 waitAudioMs；feed 仅确认状态）
     const final = (await api.get([primary.id])).find((a) => a.status === "complete");
-    if (!final?.audio_url) throw new Error("音频未就绪（轮询超时）");
+    if (!final) throw new Error("音频未就绪（轮询超时）");
 
-    const sources = this.resolveSources(final);
-    const ext = this.detectExt(sources[0] ?? final.audio_url);
-    const fileName = `suno_${req.title.slice(0, 40).replace(/[^\w\u4e00-\u9fff-]+/g, "_")}_${req.seed}.${ext}`;
-    if (!existsSync(this.opts.publicDir)) await mkdir(this.opts.publicDir, { recursive: true });
-    const buf = await this.download(sources);
-    await writeFile(join(this.opts.publicDir, fileName), buf);
-
+    // 二次开发点⑪: feed 不含 media_urls（audio_url 恒为 forbidden 占位）——经 /api/clip/{id} 详情取真实音频源
+    const detail = (await api.getClip(final.id)) as Record<string, unknown>;
+    const sources = this.resolveSources(detail);
+    if (sources.length === 0) throw new Error("音频源缺失（详情接口 media_urls 未就绪）");
+    const ext = this.detectExt(sources[0]);
+    // 二次开发点⑫: 源格式音频由客户端浏览器会话播放/下载交付（Suno 对自动化下载 policy 封锁：
+    // cdn1 socket hang up / cloudfront 加密 blob；浏览器上下文=放行环境，<audio>/<a download> 无需 CORS）
     return {
-      audioUrl: `/generated/${fileName}`,
+      audioUrl: sources[0],
       sourceFormat: ext as "mp3" | "wav" | "flac",
       durationSec: Number(final.duration ?? req.durationSec) || req.durationSec,
       raw: final as unknown as Record<string, unknown>,
     };
   }
 
-  /** 从 clip 对象提取全部可用音频源（media_urls 真实直链优先，audio_url 兜底） */
+  /** 从 clip 对象提取全部可用音频源（cloudfront m4a 首选：cdn1.suno.ai 对服务器 IP 403；audio_url 兜底） */
   private resolveSources(clip: Record<string, unknown>): string[] {
     const urls: Array<{ url?: string }> = (clip.media_urls as Array<{ url?: string }>) ?? [];
     const list = urls.map((u) => u.url).filter((u): u is string => Boolean(u));
+    list.sort((a, b) => (b.includes("cloudfront") ? 1 : 0) - (a.includes("cloudfront") ? 1 : 0));
     const direct = clip.audio_url as string | undefined;
     if (direct && !direct.includes("forbidden")) list.push(direct);
     return [...new Set(list)];
@@ -140,7 +141,7 @@ export class SunoGatewayAdapter {
     let lastErr: unknown;
     for (const url of urls) {
       try {
-        const res = await this.transport().get(url, { responseType: "arraybuffer", timeout: 30_000 });
+        const res = await this.transport().get(url, { responseType: "arraybuffer", timeout: 30_000, headers: { Referer: "https://suno.com/", "User-Agent": "Mozilla/5.0" } });
         return Buffer.from(res.data as ArrayBuffer);
       } catch (e) {
         lastErr = e;

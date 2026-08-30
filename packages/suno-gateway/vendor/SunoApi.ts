@@ -418,9 +418,8 @@ class SunoApi {
       await sleep(this.pollInterval(), this.pollInterval());
       while (Date.now() - startTime < this.waitAudioMs) {
         const response = await this.get(songIds);
-        const allCompleted = response.every(
-          (audio) => audio.status === 'streaming' || audio.status === 'complete'
-        );
+        // 二次开发点⑩: 完成判定=strict complete（原版把 streaming 也算完成导致过早返回生成中 clips）
+        const allCompleted = response.every((audio) => audio.status === 'complete');
         const allError = response.every((audio) => audio.status === 'error');
         if (allCompleted || allError) {
           return response;

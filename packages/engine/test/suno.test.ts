@@ -17,6 +17,7 @@ function stubTransport(ctx: { credits: number; captcha: boolean; feedStatus: str
           if (u.includes("/api/billing/info/")) return { data: { total_credits_left: ctx.credits }, status: 200, headers: {} };
           if (u.includes("/api/generate/v2/")) return { data: { clips: [{ id: "c1", status: "queued" }] }, status: 200, headers: {} };
           if (u.includes("cdn.example")) return { data: Buffer.from("RIFF-test"), status: 200, headers: {} };
+          if (u.includes("/api/clip/")) return { data: { id: "c1", status: "complete", audio_url: "https://studio-api.prod.suno.com/api/forbidden", media_urls: [{ url: "https://cdn1.suno.ai/c1.mp3" }, { url: "https://d2lwuy8qc234o3.cloudfront.net/1/clip/c1.m4a" }] }, status: 200, headers: {} };
           if (u.includes("/api/feed/v2")) return { data: { clips: [{ id: "c1", audio_url: "https://cdn.example/c1.mp3", status: ctx.feedStatus, duration: "3:00", metadata: {} }] }, status: 200, headers: {} };
           if (u.includes("auth.suno.com")) return { data: { response: { last_active_session_id: "s" } }, status: 200, headers: {} };
           if (u.includes("/sessions/")) return { data: { jwt: "t" }, status: 200, headers: {} };

@@ -28,6 +28,7 @@ function stubTransport(ctx: MockCtx): AxiosInstance {
           if (u.includes("/api/billing/info/")) return { data: { total_credits_left: ctx.credits, period: "m", monthly_limit: 100, monthly_usage: 10 }, status: 200, headers: {} };
           if (u.includes("/api/generate/v2/")) return { data: { clips: [{ id: "c1", title: "t", audio_url: "", status: "queued", metadata: {} }] }, status: 200, headers: {} };
           if (u.includes("cdn.example")) return { data: Buffer.from("RIFF-test"), status: 200, headers: {} };
+          if (u.includes("/api/clip/")) return { data: { id: "c1", status: "complete", audio_url: "https://studio-api.prod.suno.com/api/forbidden", media_urls: [{ url: "https://cdn1.suno.ai/c1.mp3" }, { url: "https://d2lwuy8qc234o3.cloudfront.net/1/clip/c1.m4a" }] }, status: 200, headers: {} };
           if (u.includes("/api/feed/v2")) return { data: { clips: [{ id: "c1", title: "t", audio_url: "https://cdn.example/c1.mp3", status: ctx.feedStatus, created_at: "x", model_name: "m", metadata: { prompt: "p", duration: "3:00" }, duration: "3:00" }] }, status: 200, headers: {} };
           if (u.includes("clerk.suno.com") || u.includes("auth.suno.com")) return { data: { response: { last_active_session_id: "sid1" } }, status: 200, headers: {} };
           if (u.includes("/v1/client")) return { data: { response: { last_active_session_id: "sid1" } }, status: 200, headers: {} };
@@ -60,10 +61,7 @@ test("G1 契约：render 全链（quota→generate→poll→源格式下载）",
     });
     const res = await adapter.render(REQ);
     assert.equal(res.sourceFormat, "mp3");
-    assert.ok(res.audioUrl.startsWith("/generated/suno_"));
-    const file = join(dir, "generated", res.audioUrl.replace(/^\//, "").replace(/^generated\//, ""));
-    assert.ok(existsSync(file));
-    assert.ok(statSync(file).size > 0);
+    assert.ok(res.audioUrl.startsWith("https://cdn1.suno.ai/") || res.audioUrl.startsWith("https://d2lwuy8qc234o3"), "远程源链接交付（浏览器会话播放）");
     assert.ok(ctx.calls.some((c) => c.url.includes("/api/generate/v2/")), "custom_generate 命中");
     assert.ok(ctx.calls.some((c) => c.url.includes("/api/feed/v2")), "poll 命中");
   } finally {
@@ -112,7 +110,7 @@ test("G3 captcha 触发 → 轮换 cookie（第 1 个剔除后第 2 个成功）
     waitAudioMs: 800,
   });
   const res = await adapter.render(REQ); // captcha cookie 失败 → 自动用第 2 个
-  assert.ok(res.audioUrl.endsWith(".mp3"));
+  assert.ok(res.audioUrl.includes("cdn1.suno.ai") || res.audioUrl.includes("cloudfront"));
   const pool = new CookiePool(["a", "b"]);
   assert.equal(pool.next(), "a");
   pool.disable("a");
