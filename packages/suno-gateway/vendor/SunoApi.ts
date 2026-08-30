@@ -65,6 +65,15 @@ interface PersonaResponse {
   is_following: boolean;
 }
 
+/** 二次开发点⑧: 新版 clip 真实资源在 media_urls[]（audio_url 为 api/forbidden 旧占位） */
+function resolveAudioUrl(audio: Record<string, any>): string {
+  const direct = audio.audio_url;
+  if (direct && typeof direct === "string" && !direct.includes("forbidden")) return direct;
+  const urls: Record<string, any>[] = Array.isArray(audio.media_urls) ? audio.media_urls : [];
+  const pick = (ext: string) => urls.find((u) => u?.url?.endsWith(ext))?.url;
+  return pick(".mp3") ?? pick(".m4a") ?? urls.find((u) => u?.url)?.url ?? "";
+}
+
 class SunoApi {
   private static BASE_URL: string = 'https://studio-api.prod.suno.com';
   private static CLERK_BASE_URL: string = 'https://auth.suno.com';
@@ -427,7 +436,7 @@ class SunoApi {
         title: audio.title,
         image_url: audio.image_url,
         lyric: audio.metadata.prompt,
-        audio_url: audio.audio_url,
+        audio_url: resolveAudioUrl(audio),
         video_url: audio.video_url,
         created_at: audio.created_at,
         model_name: audio.model_name,

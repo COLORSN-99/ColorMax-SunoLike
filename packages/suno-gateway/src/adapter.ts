@@ -99,10 +99,11 @@ export class SunoGatewayAdapter {
     const final = (await api.get([primary.id])).find((a) => a.status === "complete");
     if (!final?.audio_url) throw new Error("音频未就绪（轮询超时）");
 
-    const ext = this.detectExt(final.audio_url);
+    const sources = this.resolveSources(final);
+    const ext = this.detectExt(sources[0] ?? final.audio_url);
     const fileName = `suno_${req.title.slice(0, 40).replace(/[^\w\u4e00-\u9fff-]+/g, "_")}_${req.seed}.${ext}`;
     if (!existsSync(this.opts.publicDir)) await mkdir(this.opts.publicDir, { recursive: true });
-    const buf = await this.download(final.audio_url);
+    const buf = await this.download(sources);
     await writeFile(join(this.opts.publicDir, fileName), buf);
 
     return {
@@ -111,6 +112,15 @@ export class SunoGatewayAdapter {
       durationSec: Number(final.duration ?? req.durationSec) || req.durationSec,
       raw: final as unknown as Record<string, unknown>,
     };
+  }
+
+  /** 从 clip 对象提取全部可用音频源（media_urls 真实直链优先，audio_url 兜底） */
+  private resolveSources(clip: Record<string, unknown>): string[] {
+    const urls: Array<{ url?: string }> = (clip.media_urls as Array<{ url?: string }>) ?? [];
+    const list = urls.map((u) => u.url).filter((u): u is string => Boolean(u));
+    const direct = clip.audio_url as string | undefined;
+    if (direct && !direct.includes("forbidden")) list.push(direct);
+    return [...new Set(list)];
   }
 
   private isAuthError(e: unknown): boolean {
@@ -125,8 +135,17 @@ export class SunoGatewayAdapter {
     return "mp3";
   }
 
-  private async download(url: string): Promise<Buffer> {
-    const res = await this.transport().get(url, { responseType: "arraybuffer" });
-    return Buffer.from(res.data as ArrayBuffer);
+  /** 二次开发点⑨: 多源下载容错（mp3 域被拦时回退 m4a/其他 media_urls） */
+  private async download(urls: string[]): Promise<Buffer> {
+    let lastErr: unknown;
+    for (const url of urls) {
+      try {
+        const res = await this.transport().get(url, { responseType: "arraybuffer", timeout: 30_000 });
+        return Buffer.from(res.data as ArrayBuffer);
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error("音频下载失败（所有源均不可达）");
   }
 }
