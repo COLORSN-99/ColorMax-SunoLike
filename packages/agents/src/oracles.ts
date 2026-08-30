@@ -31,6 +31,25 @@ export async function createIntent(settings: LlmSettings, prompt: string): Promi
   return IntentSchema.parse({ ...intentRaw, originPrompt: prompt });
 }
 
+/** 段名归一化：真实 LLM 常输出 verse1/verse2/rap/pre…——映射到 schema 枚举 */
+export function normalizeSectionName(name: string): string {
+  const n = name.trim().toLowerCase();
+  const map: [string, string][] = [
+    ["intro", "intro"], ["instrumental", "intro"],
+    ["verse", "verse"], ["v", "verse"],
+    ["prechorus", "preChorus"], ["pre-chorus", "preChorus"], ["pre_chorus", "preChorus"], ["pre", "preChorus"],
+    ["chorus", "chorus"], ["hook", "chorus"], ["副歌", "chorus"],
+    ["bridge", "bridge"], ["rap", "verse"], ["ad-lib", "bridge"], ["adlib", "bridge"], ["break", "bridge"],
+    ["outro", "outro"], ["ending", "outro"],
+  ];
+  const hit = map.find(([k]) => n === k || n.startsWith(k + " ") || n.startsWith(k + "-") || n.startsWith(k + "_"))?.[1];
+  if (hit) return hit;
+  // 数字后缀剥离：verse1/chorus2…
+  const stripped = n.replace(/^[^a-z]*|[0-9]+$/g, "");
+  const hit2 = map.find(([k]) => stripped === k)?.[1];
+  return hit2 ?? "verse";
+}
+
 /** 输出契约兜底：越界 clamp / 超限截断 / 缺失默认（真实 LLM 常给超界值——mock 测不出） */
 export function repairPlan(raw: Record<string, unknown>): Record<string, unknown> {
   const intent = (raw.intent ?? {}) as Record<string, unknown>;
@@ -43,11 +62,17 @@ export function repairPlan(raw: Record<string, unknown>): Record<string, unknown
   if (!Array.isArray(arrangement.chordProgression) || arrangement.chordProgression.length === 0)
     arrangement.chordProgression = ["C", "G", "Am", "F"];
   const structure = Array.isArray(raw.structure)
-    ? (raw.structure as unknown[]).slice(0, 12).filter((x) => x && typeof x === "object")
+    ? (raw.structure as unknown[])
+        .slice(0, 12)
+        .filter((x) => x && typeof x === "object")
+        .map((seg) => {
+          const item = { ...(seg as Record<string, unknown>) };
+          if (typeof item.name === "string") item.name = normalizeSectionName(item.name);
+          return item;
+        })
     : [];
   const title = String(raw.title ?? "").trim();
   return { ...raw, intent, arrangement, structure, title: title || "未命名" };
-  return clone;
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));

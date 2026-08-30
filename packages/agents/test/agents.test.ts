@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { alignSong, ruleChecks, judgeSong, runAgent, jobStore, type JobEvent } from "../src/index.ts";
-import { repairPlan } from "../src/oracles.ts";
+import { repairPlan, normalizeSectionName } from "../src/oracles.ts";
 import { MockAdapter } from "@colormax/engine";
 import type { CreationPlan, SongResult, JudgeReport } from "@colormax/schema";
 
@@ -169,4 +169,14 @@ test("S2-T7 输出契约兜底：超量段落截断/clamp/缺失默认（真实 
   assert.equal((repaired.structure as unknown[]).length, 12);
   assert.equal((repaired.arrangement as any).bpm, 240);
   assert.deepEqual(repaired.arrangement.chordProgression, ["C", "G", "Am", "F"]);
+});
+
+test("S2-T8 段名归一化：verse1/verse2/rap/pre/hook → 合法枚举", () => {
+  assert.equal(normalizeSectionName("verse1"), "verse");
+  assert.equal(normalizeSectionName("Verse2"), "verse");
+  assert.equal(normalizeSectionName("rap"), "verse");
+  assert.equal(normalizeSectionName("pre"), "preChorus");
+  assert.equal(normalizeSectionName("hook"), "chorus");
+  assert.equal(normalizeSectionName("ad-lib"), "bridge");
+  assert.equal(normalizeSectionName("unknown-x"), "verse");
 });
