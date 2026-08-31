@@ -1,20 +1,51 @@
 import { randomUUID } from "node:crypto";
 import type { LlmSettings } from "@colormax/llm";
 import type { EngineAdapter } from "@colormax/engine";
-import type { Job, JobPhase, JudgeReport, AlignedSong } from "@colormax/schema";
+import type {
+  Job,
+  JobPhase,
+  JudgeReport,
+  AlignedSong,
+  AgentStreamEvent,
+} from "@colormax/schema";
 import { runAgent } from "./graph.ts";
 
-export type JobEvent = { id: string; jobId: string; t: number } & (
+/** 信封：seq（任务内单调）+ roundId（轮次——失败清除/接续的分组键） */
+export type JobEventEnvelope = {
+  id: string;
+  jobId: string;
+  t: number;
+  seq: number;
+  roundId: string;
+};
+
+export type JobEventBody =
   | { type: "phase"; phase: JobPhase; payload?: unknown }
   | { type: "done"; result: AlignedSong; report: JudgeReport }
-  | { type: "failed"; error: string }
-);
+  | { type: "failed"; error: string; phase: JobPhase; causeKind?: string }
+  | AgentStreamEvent;
+
+export type JobEvent = JobEventEnvelope & JobEventBody;
 
 type Listener = (e: JobEvent) => void;
 
+const HISTORY_CAP = 2000;
+
+interface JobRuntime {
+  history: JobEvent[];
+  seq: number;
+  listeners: Set<Listener>;
+  dropped: number; // 环形截断丢弃计数（可观测）
+}
+
 export class JobStore {
   private jobs = new Map<string, Job>();
-  private listeners = new Map<string, Set<Listener>>();
+  private rt = new Map<string, JobRuntime>();
+  private cap: number;
+
+  constructor(cap = HISTORY_CAP) {
+    this.cap = cap;
+  }
 
   create(sessionId: string): Job {
     const now = new Date().toISOString();
@@ -27,6 +58,7 @@ export class JobStore {
       updatedAt: now,
     };
     this.jobs.set(job.id, job);
+    this.rt.set(job.id, { history: [], seq: 0, listeners: new Set(), dropped: 0 });
     return job;
   }
 
@@ -34,27 +66,65 @@ export class JobStore {
     return this.jobs.get(id);
   }
 
-  private emit(e: JobEvent) {
-    for (const cb of this.listeners.get(e.jobId) ?? []) cb(e);
+  /** 事件历史（seq > after 的补帧切片）——刷新续播/断线重连底座 */
+  historyAfter(jobId: string, after = 0): JobEvent[] {
+    const r = this.rt.get(jobId);
+    if (!r) return [];
+    return r.history.filter((e) => e.seq > after);
   }
 
   subscribe(jobId: string, cb: Listener): () => void {
-    const set = this.listeners.get(jobId) ?? new Set();
-    set.add(cb);
-    this.listeners.set(jobId, set);
+    const r = this.rt.get(jobId);
+    if (!r) return () => undefined;
+    r.listeners.add(cb);
     return () => {
-      set.delete(cb);
+      r.listeners.delete(cb);
     };
   }
 
-  /** 启动任务执行：运行 Agent 图，阶段/完成/失败事件同步 emit */
+  /** 统一发射点：封 seq/roundId → 入历史环 → 推 live 订阅者 */
+  private emit(jobId: string, roundId: string, evt: JobEventBody): JobEvent | undefined {
+    const r = this.rt.get(jobId);
+    if (!r) return undefined;
+    const full = {
+      id: randomUUID(),
+      jobId,
+      t: Date.now(),
+      seq: ++r.seq,
+      roundId,
+      ...evt,
+    } as JobEvent;
+    r.history.push(full);
+    if (r.history.length > this.cap) {
+      // 环形截断：丢最旧，但 done/failed/state_saved 终态帧永驻
+      const cut = r.history.findIndex((e) => e.type !== "done" && e.type !== "failed");
+      if (cut >= 0) {
+        r.history.splice(cut, 1);
+        r.dropped++;
+      } else {
+        r.history.shift();
+        r.dropped++;
+      }
+    }
+    for (const cb of r.listeners) cb(full);
+    return full;
+  }
+
+  /**
+   * 启动任务执行：运行 Agent 图，事件（phase/流式帧/done/failed）同步入历史+emit。
+   * onEvent：graph/adapter 细粒度流式事件（llm_thinking/tool_call/suno_progress）透传口。
+   */
   async run(jobId: string, args: {
     prompt: string;
     settings: LlmSettings;
     engine: EngineAdapter;
     maxRetries?: number;
     judge?: Parameters<typeof runAgent>[0]["judge"];
+    roundId?: string;
   }): Promise<void> {
+    const r = this.rt.get(jobId);
+    if (!r) return;
+    const roundId = args.roundId ?? randomUUID();
     const patch = (p: Partial<Job>) => {
       const cur = this.jobs.get(jobId);
       if (!cur) return;
@@ -64,7 +134,10 @@ export class JobStore {
     patch({ status: "running" });
     const emitPhase = (phase: JobPhase, payload?: unknown) => {
       patch({ phase, payload });
-      this.emit({ id: randomUUID(), jobId, t: Date.now(), type: "phase", phase, payload });
+      this.emit(jobId, roundId, { type: "phase", phase, payload });
+    };
+    const onEvent = (evt: AgentStreamEvent) => {
+      this.emit(jobId, roundId, evt);
     };
     try {
       const { aligned, report } = await runAgent({
@@ -74,13 +147,16 @@ export class JobStore {
         maxRetries: args.maxRetries,
         judge: args.judge,
         onPhase: emitPhase,
+        onEvent,
+        roundId,
       });
       patch({ phase: "deliver", status: "done", result: aligned, report });
-      this.emit({ id: randomUUID(), jobId, t: Date.now(), type: "done", result: aligned, report });
+      this.emit(jobId, roundId, { type: "done", result: aligned, report });
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
+      const failPhase = this.jobs.get(jobId)?.phase ?? "failed";
       patch({ phase: "failed", status: "failed", error: err });
-      this.emit({ id: randomUUID(), jobId, t: Date.now(), type: "failed", error: err });
+      this.emit(jobId, roundId, { type: "failed", error: err, phase: failPhase });
     }
   }
 }

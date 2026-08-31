@@ -87,6 +87,45 @@ export const JOB_PHASES = [
 ] as const;
 export type JobPhase = (typeof JOB_PHASES)[number];
 
+/** 流式可观测事件（Stage 6.1）：LLM 思考帧 / 工具执行帧 / Suno 进度帧——加法式契约，旧 phase/done/failed 不动 */
+export const THINKING_NODES = ["intent", "plan", "judge", "error-review"] as const;
+export type ThinkingNode = (typeof THINKING_NODES)[number];
+
+export interface LlmThinkingEvent {
+  type: "llm_thinking";
+  callId: string;
+  node: ThinkingNode;
+  op: "start" | "delta" | "end";
+  seq: number; // 帧内单调序号（合并排序用）
+  delta?: string;
+  ms?: number; // end 帧：本次调用耗时
+}
+
+export interface ToolCallEvent {
+  type: "tool_call";
+  callId: string;
+  node: string; // 发射节点（intent/suno/...）
+  tool: string; // getJwt/quotaCheck/customGenerate/poll/getClip/download/decrypt/save...
+  op: "start" | "log" | "end";
+  level: "info" | "warn" | "error";
+  message?: string;
+  ms?: number;
+}
+
+export interface SunoProgressEvent {
+  type: "suno_progress";
+  callId: string;
+  stage: "generate" | "poll" | "download" | "decrypt";
+  done: number;
+  total: number;
+  status: "queued" | "streaming" | "complete" | "error";
+  elapsedMs: number;
+  etaMs?: number;
+  note?: string;
+}
+
+export type AgentStreamEvent = LlmThinkingEvent | ToolCallEvent | SunoProgressEvent;
+
 /** 任务对象 */
 export const JobSchema = z.object({
   id: z.string(),

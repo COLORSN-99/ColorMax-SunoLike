@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { mkdtempSync, rmSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { alignSong, ruleChecks, judgeSong, runAgent, jobStore, type JobEvent } from "../src/index.ts";
+import { alignSong, ruleChecks, judgeSong, runAgent, jobStore, JobStore, type JobEvent } from "../src/index.ts";
 import { repairPlan, normalizeSectionName } from "../src/oracles.ts";
 import { MockAdapter } from "@colormax/engine";
 import type { CreationPlan, SongResult, JudgeReport } from "@colormax/schema";
@@ -184,4 +184,77 @@ test("S2-T8 段名归一化：verse1/verse2/rap/pre/hook → 合法枚举", () =
   assert.equal(normalizeSectionName("hook"), "chorus");
   assert.equal(normalizeSectionName("ad-lib"), "bridge");
   assert.equal(normalizeSectionName("unknown-x"), "verse");
+});
+
+test("S6-T4 事件历史环形缓冲：cap 截断且 done 终态帧永驻 + seq 单调", async () => {
+  const m = startLlmMock();
+  const dir = mkdtempSync(join(tmpdir(), "cm-"));
+  try {
+    const store = new JobStore(4); // 小 cap 验证截断
+    const job = store.create("sess-cap");
+    await store.run(job.id, {
+      prompt: "test",
+      settings: { baseURL: m.url, apiKey: "", model: "m", temperature: 0.5 } as never,
+      engine: new MockAdapter(join(dir, "g")),
+      maxRetries: 1,
+    });
+    const hist = store.historyAfter(job.id, 0);
+    assert.ok(hist.length <= 4, `截断至 cap（实际 ${hist.length}）`);
+    assert.ok(hist.some((e) => e.type === "done"), "done 终态帧永驻");
+    const seqs = hist.map((e) => e.seq);
+    assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b), "seq 单调");
+    // 全量事件数 > cap（意图/规划/派发/suno/对齐/评判/交付双帧 + done）——证明确实发生截断
+    assert.ok(hist[0].seq > 1, "早期事件已被截断丢弃");
+  } finally {
+    await m.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("S6-T5 Last-Event-ID 补帧语义：historyAfter(after) 切片 + failed 终态保留", async () => {
+  const m = startLlmMock();
+  const dir = mkdtempSync(join(tmpdir(), "cm-"));
+  try {
+    const job = jobStore.create("sess-replay");
+    await jobStore.run(job.id, {
+      prompt: "test",
+      settings: { baseURL: m.url, apiKey: "", model: "m", temperature: 0.5 } as never,
+      engine: new MockAdapter(join(dir, "g")),
+      maxRetries: 1,
+    });
+    const all = jobStore.historyAfter(job.id, 0);
+    assert.ok(all.length >= 8);
+    assert.equal(all[0].seq, 1);
+    // 游标切片：仅返回 seq > after（客户端断开重连只补漏帧）
+    const tail = jobStore.historyAfter(job.id, all[3].seq);
+    assert.equal(tail.length, all.length - 4);
+    assert.equal(tail[0].seq, all[4].seq);
+    // roundId 信封：全部事件同轮
+    assert.equal(new Set(all.map((e) => e.roundId)).size, 1);
+  } finally {
+    await m.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("S6-T5b failed 事件带 failPhase（信封扩展进历史，可回放）", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cm-"));
+  try {
+    const job = jobStore.create("sess-fail");
+    await jobStore.run(job.id, {
+      prompt: "test",
+      settings: { baseURL: "http://127.0.0.1:9/v1", apiKey: "", model: "m", temperature: 0.5 } as never,
+      engine: new MockAdapter(join(dir, "g")),
+      maxRetries: 1,
+    });
+    const hist = jobStore.historyAfter(job.id, 0);
+    const failed = hist.find((e) => e.type === "failed");
+    assert.ok(failed, "failed 帧存在");
+    if (failed?.type === "failed") {
+      assert.ok(failed.error);
+      assert.ok(failed.phase === "intent" || failed.phase === "failed", "携带失败落点 phase");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

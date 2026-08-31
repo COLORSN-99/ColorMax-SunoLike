@@ -9,6 +9,7 @@ import {
   type JobPhase,
   type JudgeReport,
   type SongResult,
+  type AgentStreamEvent,
 } from "@colormax/schema";
 import type { EngineAdapter } from "@colormax/engine";
 import { createIntent, createPlan } from "./oracles.ts";
@@ -30,6 +31,8 @@ export interface AgentRunContext {
   settings: LlmSettings;
   engine: EngineAdapter;
   onPhase?: (phase: JobPhase, payload?: unknown) => void;
+  onEvent?: (evt: AgentStreamEvent) => void; // Stage 6.1：流式细粒度帧透传（不传静默）
+  roundId?: string; // 轮次分组键（失败清除/接续）
   judge?: JudgeDeps; // 测试注入
 }
 
@@ -131,6 +134,8 @@ export async function runAgent(
     settings: LlmSettings;
     engine: EngineAdapter;
     onPhase?: (phase: JobPhase, payload?: unknown) => void;
+    onEvent?: (evt: AgentStreamEvent) => void;
+    roundId?: string;
     judge?: JudgeDeps;
     maxRetries?: number;
   },

@@ -1,38 +1,53 @@
-import { jobStore } from "@colormax/agents";
+import { jobStore, type JobEvent } from "@colormax/agents";
 
-/** GET /api/jobs/:id/events — SSE 阶段事件流（phase payload / done / failed） */
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+/** 事件帧：id:seq 支持 Last-Event-ID 断线补帧；未知类型统一以 type 为事件名透传 */
+function frame(e: JobEvent): string {
+  const { type, ...body } = e;
+  return `id: ${e.seq}\nevent: ${type}\ndata: ${JSON.stringify(body)}\n\n`;
+}
+
+/** GET /api/jobs/:id/events — SSE 事件流：先按游标补帧（Last-Event-ID / ?after=），再 live */
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const job = jobStore.get(id);
   if (!job) return new Response("not found", { status: 404 });
 
+  const url = new URL(req.url);
+  const after = Number(req.headers.get("last-event-id") ?? url.searchParams.get("after") ?? "0") || 0;
+
   const enc = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
-      const send = (event: string, data: unknown) =>
-        controller.enqueue(
-          enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-        );
+      const send = (s: string) => controller.enqueue(enc.encode(s));
       // 初始：任务现状重放（防订阅竞态）
-      send("status", job);
+      send(`event: status\ndata: ${JSON.stringify(job)}\n\n`);
+      // 断线/刷新补帧（含已结束任务的历史——刷新续播底座）
+      for (const e of jobStore.historyAfter(id, after)) send(frame(e));
+      if (job.status === "done" || job.status === "failed") {
+        controller.close();
+        return;
+      }
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
+      };
       const unsub = jobStore.subscribe(id, (e) => {
-        if (e.type === "phase") {
-          send("phase", { phase: e.phase, payload: e.payload });
-        } else if (e.type === "done") {
-          send("done", { result: e.result, report: e.report });
-          controller.close();
-        } else if (e.type === "failed") {
-          send("failed", { error: e.error });
-          controller.close();
+        if (e.seq <= after) return; // 补帧已覆盖
+        send(frame(e));
+        if (e.type === "done" || e.type === "failed") {
+          unsub();
+          close();
         }
       });
-      const t = setTimeout(() => {
-        // 防止低活跃路由长时间保留（客户端断开兜底）
-      }, 5 * 60_000);
-      _req.signal?.addEventListener("abort", () => {
-        clearTimeout(t);
+      req.signal?.addEventListener("abort", () => {
         unsub();
-        controller.close();
+        close();
       });
     },
     cancel() {
