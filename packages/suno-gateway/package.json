@@ -7,6 +7,7 @@
   "license": "LGPL-3.0-or-later",
   "description": "Vendored & locally redeveloped Suno gateway (base: gcui-art/suno-api LGPL-3.0)",
   "dependencies": {
+    "@colormax/schema": "workspace:*",
     "axios": "^1.7.8",
     "cookie": "^1.0.2"
   }

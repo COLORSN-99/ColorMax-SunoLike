@@ -2,6 +2,7 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { AgentStreamEvent } from "@colormax/schema";
 
 export interface RenderRequest {
   title: string;
@@ -18,8 +19,14 @@ export interface RenderResult {
   raw: Record<string, unknown>;
 }
 
+/** Stage 6.1：渲染期细粒度事件透传（tool_call/suno_progress）；不传即静默（向后兼容） */
+export interface RenderHooks {
+  emit?: (evt: AgentStreamEvent) => void;
+  callId?: string;
+}
+
 export interface EngineAdapter {
-  render(req: RenderRequest): Promise<RenderResult>;
+  render(req: RenderRequest, hooks?: RenderHooks): Promise<RenderResult>;
 }
 
 const NOTE_FREQ: Record<string, number> = {
@@ -38,7 +45,12 @@ export class MockAdapter implements EngineAdapter {
     this.publicDir = publicDir;
   }
 
-  async render(req: RenderRequest): Promise<RenderResult> {
+  async render(req: RenderRequest, hooks?: RenderHooks): Promise<RenderResult> {
+    const callId = hooks?.callId ?? "mock";
+    const emit = (tool: string, op: "start" | "end", message?: string, ms?: number) =>
+      hooks?.emit?.({ type: "tool_call", callId, node: "suno", tool, op, level: "info", message, ms });
+    emit("mockSynth", "start");
+    const t0 = Date.now();
     const seed = req.seed ?? 0;
     const bpm = req.arrangement.bpm || 100;
     const beatSec = 60 / bpm;
@@ -73,11 +85,15 @@ export class MockAdapter implements EngineAdapter {
       }
     }
     const wav = encodeWav(samples, sampleRate);
+    emit("mockSynth", "end", `${bars} 小节 · ${bpm}bpm`, Date.now() - t0);
+    emit("saveFile", "start");
+    const fileT0 = Date.now();
     if (!existsSync(this.publicDir))
       await mkdir(this.publicDir, { recursive: true });
-    const name = `mock_${req.title.replace(/[^\w\u4e00-\u9fff-]+/g, "_").slice(0, 40)}_${seed}.wav`;
+    const name = `mock_${req.title.replace(/[^\w一-鿿-]+/g, "_").slice(0, 40)}_${seed}.wav`;
     const file = join(this.publicDir, name);
     await writeFile(file, wav);
+    emit("saveFile", "end", `${name}（${wav.byteLength} bytes）`, Date.now() - fileT0);
     return {
       audioUrl: `/generated/${name}`,
       sourceFormat: "wav",

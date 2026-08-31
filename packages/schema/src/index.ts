@@ -69,7 +69,7 @@ export const JudgeReportSchema = z.object({
   score: z.number().min(0).max(5),
   perDimension: z.record(z.number().min(0).max(5)),
   comment: z.string().optional(),
-  rules: z.array(z.object({ name: z.string(), passed: z.boolean(), note: z.string().optional() })),
+  rules: z.array(z.object({ name: z.string(), passed: z.boolean(), blocking: z.boolean().optional(), note: z.string().optional() })),
   retried: z.number().int(),
   verdict: z.enum(["pass", "retry", "give-up"]),
 });
@@ -125,6 +125,12 @@ export interface SunoProgressEvent {
 }
 
 export type AgentStreamEvent = LlmThinkingEvent | ToolCallEvent | SunoProgressEvent;
+
+/** Stage 6.1：渲染/引擎细粒度事件透传（engine 与 suno-gateway 共享，避免反向依赖） */
+export interface StreamHooks {
+  emit?: (evt: AgentStreamEvent) => void;
+  callId?: string;
+}
 
 /** 任务对象 */
 export const JobSchema = z.object({

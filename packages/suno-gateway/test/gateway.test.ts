@@ -162,3 +162,36 @@ test("G5 CaptchaRequiredError 可直接捕获（fail-fast 语义）", () => {
   const e = new CaptchaRequiredError("captcha");
   assert.equal(e.name, "CaptchaRequiredError");
 });
+
+test("S6-T6 渲染事件透传：tool_call 步骤链 + vendor onPoll → suno_progress", async () => {
+  const ctx: MockCtx = { credits: 10, captcha: false, feedStatus: "complete", calls: [] };
+  const dir = mkdtempSync(join(tmpdir(), "s6t6-"));
+  try {
+    const adapter = new SunoGatewayAdapter({
+      cookies: ["__client=xx; ajs_anonymous_id=d6"],
+      publicDir: join(dir, "generated"),
+      transport: stubTransport(ctx),
+      waitAudioMs: 800,
+    });
+    const events: Array<Record<string, unknown>> = [];
+    const res = await adapter.render(REQ, {
+      callId: "suno-1",
+      emit: (e) => events.push(e as unknown as Record<string, unknown>),
+    });
+    assert.ok(res.audioUrl.startsWith("/generated/"));
+    const toolSeq = events.filter((e) => e.type === "tool_call").map((e) => `${e.tool}:${e.op}`);
+    for (const expect of ["quotaCheck:start", "customGenerate:start", "feedConfirm:start", "clipDetail:start", "download:start", "decrypt:start", "saveFile:start"]) {
+      assert.ok(toolSeq.includes(expect), `缺步骤事件 ${expect}（实际 ${toolSeq.join(",")}）`);
+    }
+    assert.ok(toolSeq.includes("saveFile:end"), "全链 end 帧收尾");
+    const progress = events.filter((e) => e.type === "suno_progress");
+    assert.ok(progress.length >= 1, "轮询期至少一帧进度");
+    const p = progress[0] as Record<string, unknown>;
+    assert.equal(p.callId, "suno-1");
+    assert.equal(p.stage, "poll");
+    assert.equal(typeof p.elapsedMs, "number");
+    assert.ok(toolSeq.every((t) => t.startsWith("quotaCheck") || t.startsWith("customGenerate") || t.startsWith("feedConfirm") || t.startsWith("clipDetail") || t.startsWith("download") || t.startsWith("decrypt") || t.startsWith("saveFile")));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

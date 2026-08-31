@@ -1,4 +1,5 @@
 import { StateGraph, START, END } from "@langchain/langgraph";
+import { randomUUID } from "node:crypto";
 import type { LlmSettings } from "@colormax/llm";
 import {
   AlignedSongSchema,
@@ -61,21 +62,30 @@ export function buildAgentGraph(ctx: AgentRunContext) {
       ctx.onPhase?.("plan", plan);
       return { plan };
     })
-    .addNode("dispatchNode", async () => {
+    .addNode("dispatchNode", async (s: AgentState) => {
       ctx.onPhase?.("dispatch");
+      const t0 = Date.now();
+      ctx.onEvent?.({ type: "tool_call", callId: "dispatch", node: "dispatch", tool: "subagentDispatch", op: "start", level: "info" });
       await new Promise((r) => setTimeout(r, 120)); // subagent 派发节拍（可观测）
+      ctx.onEvent?.({
+        type: "tool_call", callId: "dispatch", node: "dispatch", tool: "subagentDispatch", op: "end", level: "info",
+        ms: Date.now() - t0, message: `派发 suno-subagent：《${s.plan?.title ?? ""}》seed=${s.plan?.seed ?? "-"} · 重派第 ${s.retries} 轮`,
+      });
       return {};
     })
     .addNode("sunoNode", async (s: AgentState) => {
       ctx.onPhase?.("suno");
       const plan = s.plan!;
-      const song = await ctx.engine.render({
-        title: plan.title,
-        lyrics: plan.structure.map((x) => x.lyrics),
-        arrangement: plan.arrangement,
-        seed: plan.seed,
-        durationSec: plan.intent.durationSec,
-      });
+      const song = await ctx.engine.render(
+        {
+          title: plan.title,
+          lyrics: plan.structure.map((x) => x.lyrics),
+          arrangement: plan.arrangement,
+          seed: plan.seed,
+          durationSec: plan.intent.durationSec,
+        },
+        { emit: ctx.onEvent, callId: randomUUID() },
+      );
       ctx.onPhase?.("suno", { audioUrl: song.audioUrl, durationSec: song.durationSec });
       return {
         song: {
@@ -104,6 +114,11 @@ export function buildAgentGraph(ctx: AgentRunContext) {
           : { settings: ctx.settings, onEvent: ctx.onEvent };
         const report = await judgeSong(deps, s.aligned!, s.retries);
         const nextRetries = report.verdict === "retry" ? s.retries + 1 : s.retries;
+        ctx.onEvent?.({
+          type: "tool_call", callId: "ruleChecks", node: "judge", tool: "ruleChecks", op: "end",
+          level: report.rules.every((r) => !r.blocking || r.passed) ? "info" : "warn",
+          message: report.rules.map((r) => `${r.passed ? "✓" : "✗"} ${r.name}${r.blocking ? "" : "（软）"}${r.note ? " " + r.note : ""}`).join("\n"),
+        });
         ctx.onPhase?.("judge", report);
         return { report, retries: nextRetries };
       },

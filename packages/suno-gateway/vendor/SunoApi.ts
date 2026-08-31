@@ -316,7 +316,8 @@ class SunoApi {
     make_instrumental: boolean = false,
     model?: string,
     wait_audio: boolean = false,
-    negative_tags?: string
+    negative_tags?: string,
+    onPoll?: (audios: AudioInfo[], elapsedMs: number) => void
   ): Promise<AudioInfo[]> {
     const startTime = Date.now();
     const audios = await this.generateSongs(
@@ -327,7 +328,11 @@ class SunoApi {
       make_instrumental,
       model,
       wait_audio,
-      negative_tags
+      negative_tags,
+      undefined,
+      undefined,
+      undefined,
+      onPoll
     );
     const costTime = Date.now() - startTime;
     logger.info(
@@ -362,7 +367,8 @@ class SunoApi {
     negative_tags?: string,
     task?: string,
     continue_clip_id?: string,
-    continue_at?: number
+    continue_at?: number,
+    onPoll?: (audios: AudioInfo[], elapsedMs: number) => void
   ): Promise<AudioInfo[]> {
     await this.keepAlive();
     const payload: any = {
@@ -418,6 +424,8 @@ class SunoApi {
       await sleep(this.pollInterval(), this.pollInterval());
       while (Date.now() - startTime < this.waitAudioMs) {
         const response = await this.get(songIds);
+        // 二次开发点⑮: 轮询进度回调（供上层透传 suno_progress 事件到对话框；不改变循环语义）
+        if (onPoll) { try { onPoll(response, Date.now() - startTime); } catch { /* 回调异常不影响轮询 */ } }
         // 二次开发点⑩: 完成判定=strict complete（原版把 streaming 也算完成导致过早返回生成中 clips）
         const allCompleted = response.every((audio) => audio.status === 'complete');
         const allError = response.every((audio) => audio.status === 'error');
