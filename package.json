@@ -6,6 +6,6 @@
   "scripts": {
     "dev:web": "pnpm --filter @colormax/web dev",
     "build:web": "pnpm --filter @colormax/web build",
-    "test:unit": "node --test packages/*/test/*.test.ts"
+    "test:unit": "node --test packages/*/test/*.test.ts apps/web/test/*.test.ts"
   }
 }
