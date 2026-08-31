@@ -50,8 +50,17 @@ export type Segment =
       reviewText: string;
     };
 
-/** SSE 事件（后端 JobEvent 信封去壳后的帧体）——宽松结构，reducer 只取所需字段 */
-export interface Evt {
+/** 对话消息（R2 持久化单元）：assistant 消息携带 jobId/lastSeq 支持刷新续播与补帧 */
+export interface Msg {
+  id: string;
+  role: "user" | "assistant";
+  jobId?: string;
+  roundId?: string;
+  lastSeq?: number;
+  segments: Segment[];
+}
+
+/** SSE 事件（后端 JobEvent 信封去壳后的帧体）——宽松结构，reducer 只取所需字段 */export interface Evt {
   type: string;
   phase?: string;
   payload?: unknown;

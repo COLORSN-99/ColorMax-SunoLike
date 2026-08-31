@@ -1,14 +1,14 @@
 "use client";
 
-/** 创作室主壳（Stage 6.1）：对话窗口=segment 流式渲染；SSE 帧解析→applyEvent reducer */
-import { useRef, useState } from "react";
+/** 创作室主壳（Stage 6.1/4.1）：segment 流式对话 + localStorage 会话持久化 + 刷新续播 */
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ConfigProvider, theme, Layout, List, Tag, Typography, Steps } from "antd";
+import { ConfigProvider, theme, Layout, List, Tag, Typography, Steps, Button } from "antd";
 import { Sender, Conversations, Welcome } from "@ant-design/x";
 import SongsBoard from "../components/SongsBoard";
 import { SegmentView } from "../components/blocks";
-import { applyEvent, PHASE_LABEL, type Segment, type Evt } from "../../lib/segments";
-import { parseSseBuffer } from "../../lib/sse";
+import { PHASE_LABEL } from "@/lib/segments";
+import { useSessions } from "./useSessions";
 import { SERVICE_MARKET, PLUGIN_MARKET } from "../data/market";
 
 const { Sider, Content } = Layout;
@@ -16,106 +16,20 @@ const { Text } = Typography;
 
 const PHASES = ["intent", "plan", "dispatch", "suno", "align", "judge", "deliver"] as const;
 
-export interface Msg {
-  id: string;
-  role: "user" | "assistant";
-  jobId?: string;
-  roundId?: string;
-  segments: Segment[];
-}
-
-const uid = () => Math.random().toString(36).slice(2, 10);
-
 export default function Studio() {
   const [prompt, setPrompt] = useState("给妈妈写一首温暖的中文抒情歌");
-  const [msgs, setMsgs] = useState<Msg[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [phase, setPhase] = useState<string | null>(null);
-  const [engineNote, setEngineNote] = useState<string | null>(null);
-  const [sessions] = useState([
-    { key: "s1", label: "给妈妈写一首温暖的中文抒情歌" },
-    { key: "s2", label: "摇滚风格的毕业告别歌" },
-  ]);
-  const [active, setActive] = useState("s1");
+  const { sessions, active, msgs, phase, busy, engineNote, selectSession, createSession, run, resumePending } = useSessions();
   const [tab, setTab] = useState("studio");
   const scrollRef = useRef<HTMLDivElement>(null);
-  const seenSeq = useRef(0);
 
-  const patchAssistant = (jobId: string, fn: (segs: Segment[]) => Segment[]) => {
-    setMsgs((m) => {
-      const i = m.findIndex((x) => x.jobId === jobId);
-      if (i < 0) return m;
-      return m.map((x, j) => (j === i ? { ...x, segments: fn(x.segments), roundId: x.roundId } : x));
-    });
-  };
+  useEffect(() => {
+    if (active) void resumePending(); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [active]);
 
-  const run = async (input?: string) => {
+  const run_ = async (input?: string) => {
     const p = (input ?? prompt).trim();
     if (!p || busy) return;
-    setBusy(true);
-    setPhase(null);
-    setEngineNote(null);
-    seenSeq.current = 0;
-    setMsgs((m) => [...m, { id: uid(), role: "user", segments: [{ kind: "text", text: p }] }]);
-    let jobId = "";
-    try {
-      const created = await fetch("/api/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: p, sessionId: active }),
-      });
-      if (!created.ok) throw new Error(`创建任务失败 HTTP ${created.status}`);
-      const { id, engineModeDoc } = (await created.json()) as { id: string; engineModeDoc?: string };
-      jobId = id;
-      if (engineModeDoc) setEngineNote(engineModeDoc);
-      setMsgs((m) => [...m, { id: uid(), role: "assistant", jobId: id, segments: [] }]);
-
-      const res = await fetch(`/api/jobs/${id}/events`);
-      if (!res.ok || !res.body) throw new Error(`事件流失败 HTTP ${res.status}`);
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const { frames, rest } = parseSseBuffer(buf);
-        buf = rest;
-        for (const f of frames) {
-          let e: Evt & { seq?: number };
-          try {
-            e = JSON.parse(f.data);
-          } catch {
-            continue;
-          }
-          if (typeof e.seq === "number") {
-            if (e.seq <= seenSeq.current) continue; // 补帧去重（幂等）
-            seenSeq.current = e.seq;
-            e.roundId = e.roundId ?? f.id;
-          }
-          if (f.event === "status") {
-            if (e.status === "done" || e.status === "failed") {
-              // 恢复场景：历史帧会补齐，这里不动
-            }
-            continue;
-          }
-          if (f.event === "phase") setPhase(e.phase ?? null);
-          if (f.event === "done") setPhase("deliver");
-          patchAssistant(id, (segs) => applyEvent(segs, { ...e, jobId: id }));
-          scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-        }
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const errSeg: Segment = {
-        kind: "error", roundId: uid(), headline: "任务启动失败", category: "unknown", steps: [],
-        resolvableByCli: false, raw: msg, reviewStreaming: false, reviewText: "",
-      };
-      if (jobId) patchAssistant(jobId, (segs) => [...segs, errSeg]);
-      else setMsgs((m) => [...m, { id: uid(), role: "assistant", segments: [errSeg] }]);
-    } finally {
-      setBusy(false);
-    }
+    await run(p);
   };
 
   const stepIndex = phase ? PHASES.indexOf((phase as (typeof PHASES)[number])) : -1;
@@ -164,14 +78,15 @@ export default function Studio() {
               </List.Item>
             )}
           />
-          <div style={{ padding: "18px 12px 4px", borderTop: "1px solid #242428" }}>
+          <div style={{ padding: "18px 12px 4px", borderTop: "1px solid #242428", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <Text strong style={{ color: "#9a9aa0", fontSize: 11, letterSpacing: ".8px" }}>对话历史 · SESSIONS</Text>
+            <Button size="small" type="text" style={{ color: "#6a6acd", fontSize: 16, height: 22 }} onClick={() => createSession("新对话")} title="新对话">＋</Button>
           </div>
           <Conversations
             style={{ padding: "0 8px 24px" }}
-            items={sessions.map((s) => ({ key: s.key, label: s.label }))}
+            items={sessions.map((s) => ({ key: s.id, label: s.title }))}
             activeKey={active}
-            onActiveChange={setActive}
+            onActiveChange={selectSession}
           />
         </Sider>
 
@@ -201,7 +116,7 @@ export default function Studio() {
                   <Welcome
                     icon={<span style={{ fontSize: 30 }}>🎵</span>}
                     title="ColorMax 创作室"
-                    description="一句话，一首歌。多 Agent 联合编曲：意图 → 规划 → Suno Sub-Agent → 对齐评判 → 交付。全过程流式可见：思考折叠块 / 工具终端 / 生成进度。"
+                    description="一句话，一首歌。多 Agent 联合编曲：意图 → 规划 → Suno Sub-Agent → 对齐评判 → 交付。全过程流式可见：思考折叠块 / 工具终端 / 生成进度。会话自动保存在浏览器本地，刷新不丢。"
                   />
                 ) : (
                   msgs.map((m) =>
@@ -231,7 +146,7 @@ export default function Studio() {
           )}
 
           <div style={{ padding: "12px 20px 20px", borderTop: "1px solid #242428" }}>
-            <Sender loading={busy} value={prompt} onChange={setPrompt} onSubmit={run}
+            <Sender loading={busy} value={prompt} onChange={setPrompt} onSubmit={run_}
               placeholder="描述你的创作想法…（Enter 发送）" />
           </div>
         </Content>

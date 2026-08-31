@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ConfigProvider, theme, Card, Tag, Typography, Alert, Row, Col } from "antd";
 import Link from "next/link";
+import { saveBoard, loadBoard, type KV } from "@/lib/storage";
 
 const { Text } = Typography;
 
@@ -17,17 +18,33 @@ interface Song {
   model: string;
 }
 
-/** 作品看板：全部已创作歌曲（DRM 解密 → 转码 MP3 同源播放） */
+const getKV = (): KV | null =>
+  typeof window !== "undefined" && window.localStorage
+    ? { getItem: (k) => window.localStorage.getItem(k), setItem: (k, v) => window.localStorage.setItem(k, v), removeItem: (k) => window.localStorage.removeItem(k) }
+    : null;
+
+/** 作品看板：全部已创作歌曲（DRM 解密 → 转码 MP3 同源播放）；localStorage 快照离线兜底 */
 export default function SongsBoard() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [errId, setErrId] = useState<string | null>(null);
+  const [snapshotAt, setSnapshotAt] = useState<number | null>(null);
 
   useEffect(() => {
+    const kv = getKV();
+    const snap = kv ? loadBoard<Song>(kv) : null;
+    if (snap) {
+      setSongs(snap.songs);
+      setSnapshotAt(snap.at);
+    }
     fetch("/api/songs").then((r) => r.json()).then((d) => {
-      if (d.error) setError(d.error);
-      else setSongs(d.songs);
-    });
+      if (d.error) setError(d.error); // 保留快照渲染（不白屏）
+      else {
+        setSongs(d.songs);
+        setSnapshotAt(null);
+        if (kv) saveBoard(kv, d.songs);
+      }
+    }).catch((e) => setError(String(e)));
   }, []);
 
   return (
@@ -39,6 +56,14 @@ export default function SongsBoard() {
           已创作歌曲 · 服务端 DRM 解密 + MP3 转码中继（首次约 10s，此后缓存秒开）
         </Text>
       </div>
+      {snapshotAt && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 8 }}
+          message={<span style={{ fontSize: 12 }}>离线快照 · {new Date(snapshotAt).toLocaleTimeString()}（实时拉取失败/未就绪时展示本地缓存）</span>}
+        />
+      )}
       {error && (
         <Card style={{ marginBottom: 10 }}>
           <Text style={{ color: "#ff7875" }}>{error}</Text>
