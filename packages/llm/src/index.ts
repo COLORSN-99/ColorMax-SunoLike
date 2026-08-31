@@ -112,13 +112,76 @@ export interface ChatResult {
 }
 
 /**
+ * 流式 SSE 解析（OpenAI 兼容：delta.content / delta.reasoning_content；
+ * Anthropic：content_block_delta text_delta / thinking_delta）。
+ * 每原始增量即回调（节流在调用方），返回聚合全文。
+ */
+async function consumeSse(
+  res: Response,
+  apiFormat: "openai" | "anthropic",
+  onChunk?: (t: string) => void,
+  onReasoning?: (t: string) => void,
+): Promise<string> {
+  if (!res.body) throw new Error("LLM 流式响应无 body");
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  let full = "";
+  const feed = (line: string) => {
+    const p = line.slice(5).trim();
+    if (!p || p === "[DONE]") return;
+    let j: Record<string, any>;
+    try {
+      j = JSON.parse(p);
+    } catch {
+      return; // 分帧边界的残行：忽略（跨 read 缓冲合并后必再出现完整帧）
+    }
+    if (apiFormat === "anthropic") {
+      if (j.type === "content_block_delta") {
+        const d = j.delta;
+        if (d?.type === "text_delta" && typeof d.text === "string") { full += d.text; onChunk?.(d.text); }
+        else if (d?.type === "thinking_delta" && typeof d.thinking === "string") onReasoning?.(d.thinking);
+      }
+    } else {
+      const d = j.choices?.[0]?.delta;
+      if (typeof d?.reasoning_content === "string" && d.reasoning_content) onReasoning?.(d.reasoning_content);
+      if (typeof d?.content === "string" && d.content) { full += d.content; onChunk?.(d.content); }
+    }
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) !== -1) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      for (const line of block.split("\n")) if (line.startsWith("data:")) feed(line);
+    }
+  }
+  if (buf.startsWith("data:")) feed(buf); // 尾帧无换行收尾
+  return full;
+}
+
+/**
  * OpenAI 兼容 chat 调用（fetch 实现，零 SDK 依赖；S1-T1/T2）
  * 失败重试 2 次（指数退避 1s/2s），最后失败抛错。
+ * Stage 6.1：opts.stream=true 请求流式（onChunk 正文/onReasoning 推理链）；
+ * 端点不支持流式（返回 JSON content-type）自动降级一次性——旧服务端无感兼容。
  */
 export async function chatCompletion(
   settings: LlmSettings,
   messages: ChatMessage[],
-  opts: { temperature?: number; model?: string; maxTokens?: number; thinking?: boolean; signal?: AbortSignal } = {},
+  opts: {
+    temperature?: number;
+    model?: string;
+    maxTokens?: number;
+    thinking?: boolean;
+    signal?: AbortSignal;
+    stream?: boolean;
+    onChunk?: (t: string) => void;
+    onReasoning?: (t: string) => void;
+  } = {},
 ): Promise<ChatResult> {
   const url = chatUrl(settings);
   const apiFormat = settings.apiFormat ?? "openai";
@@ -136,6 +199,7 @@ export async function chatCompletion(
       temperature,
       messages: messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role, content: m.content })),
       ...(system ? { system } : {}),
+      ...(opts.stream ? { stream: true } : {}),
     };
   } else {
     if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
@@ -145,6 +209,7 @@ export async function chatCompletion(
       temperature,
       messages,
       ...(thinking ? { thinking: { type: "enabled" }, reasoning_effort: "high" } : {}),
+      ...(opts.stream ? { stream: true } : {}),
     };
   }
 
@@ -162,6 +227,13 @@ export async function chatCompletion(
         lastErr = new Error(`LLM HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
         continue;
       }
+      const isSse = (res.headers.get("content-type") ?? "").includes("text/event-stream");
+      if (opts.stream && isSse) {
+        const text = await consumeSse(res, apiFormat, opts.onChunk, opts.onReasoning);
+        if (!text) throw new Error("LLM 空响应");
+        return { text, raw: { stream: true } };
+      }
+      // 非流式（或端点未走流式）：一次性 JSON
       const json = (await res.json()) as Record<string, any>;
       let text = "";
       if (apiFormat === "anthropic") {
@@ -172,6 +244,10 @@ export async function chatCompletion(
         text = json.choices?.[0]?.message?.content ?? "";
       }
       if (!text) throw new Error("LLM 空响应");
+      if (opts.stream) {
+        // 降级：整段作为单帧回调（调用方思考块仍有全文）
+        opts.onChunk?.(text);
+      }
       return { text, raw: json };
     } catch (e) {
       lastErr = e;

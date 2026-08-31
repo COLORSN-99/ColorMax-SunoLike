@@ -51,13 +51,13 @@ export function buildAgentGraph(ctx: AgentRunContext) {
   })
     .addNode("intentNode", async (s: AgentState) => {
       ctx.onPhase?.("intent");
-      const intent = await createIntent(ctx.settings, s.prompt);
+      const intent = await createIntent(ctx.settings, s.prompt, ctx.onEvent);
       ctx.onPhase?.("intent", intent);
       return { intent };
     })
     .addNode("planNode", async (s: AgentState) => {
       ctx.onPhase?.("plan");
-      const plan = await createPlan(ctx.settings, s.prompt, s.intent!);
+      const plan = await createPlan(ctx.settings, s.prompt, s.intent!, ctx.onEvent);
       ctx.onPhase?.("plan", plan);
       return { plan };
     })
@@ -99,7 +99,9 @@ export function buildAgentGraph(ctx: AgentRunContext) {
       "judgeNode",
       async (s: AgentState) => {
         ctx.onPhase?.("judge");
-        const deps: JudgeDeps = ctx.judge ?? { settings: ctx.settings };
+        const deps: JudgeDeps = ctx.judge
+          ? { ...ctx.judge, onEvent: ctx.onEvent }
+          : { settings: ctx.settings, onEvent: ctx.onEvent };
         const report = await judgeSong(deps, s.aligned!, s.retries);
         const nextRetries = report.verdict === "retry" ? s.retries + 1 : s.retries;
         ctx.onPhase?.("judge", report);

@@ -1,6 +1,7 @@
-import { chatCompletion, extractJson, type LlmSettings } from "@colormax/llm";
+import { extractJson, type LlmSettings } from "@colormax/llm";
 import { JudgeReportSchema, type AlignedSong, type JudgeReport } from "@colormax/schema";
 import { ruleChecks } from "./align.ts";
+import { llmThinkingCall, type StreamEmitter } from "./stream.ts";
 
 export const PASS_THRESHOLD = 3.5;
 
@@ -9,6 +10,7 @@ export interface JudgeDeps {
   /** 测试注入：固定 LLM 评分响应 */
   judgeOverride?: (aligned: AlignedSong) => Promise<JudgeReport>;
   maxRetries?: number;
+  onEvent?: StreamEmitter; // Stage 6.1：judge LLM 思考帧
 }
 
 /** 效果评判：LLM 多维 rubric 评分（主题/情绪/风格/时长/结构）+ 规则检测 → JudgeReport */
@@ -28,7 +30,7 @@ export async function judgeSong(
     };
   }
 
-  const dims = await evaluateSemanticDims(deps.settings, aligned);
+  const dims = await evaluateSemanticDims(deps.settings, aligned, deps.onEvent);
   const { comment, ...dimVals } = dims;
   const perDimension: Record<string, number> = {
     ...dimVals,
@@ -62,6 +64,7 @@ interface SemanticDims {
 async function evaluateSemanticDims(
   settings: LlmSettings,
   aligned: AlignedSong,
+  onEvent?: StreamEmitter,
 ): Promise<SemanticDims> {
   const plan = aligned.plan;
   const song = aligned.song;
@@ -77,7 +80,7 @@ async function evaluateSemanticDims(
   }).slice(0, 3000);
   const raw = await extractJson<Record<string, unknown>>(
     (
-      await chatCompletion(settings, [
+      await llmThinkingCall(settings, [
         {
           role: "system",
           content:
@@ -88,7 +91,7 @@ async function evaluateSemanticDims(
           role: "user",
           content: `原始意图/计划与交付歌曲：\n${processed}`,
         },
-      ])
+      ], { node: "judge", onEvent })
     ).text,
   );
   const num = (v: unknown) => Math.max(0, Math.min(5, Number(v) || 0));

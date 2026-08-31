@@ -258,3 +258,81 @@ test("S6-T5b failed 事件带 failPhase（信封扩展进历史，可回放）",
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ===== S6-T3 思考帧发射（流式 mock：推理链+正文分片）=====
+function startStreamingLlmMock(): { url: string; close: () => Promise<void> } {
+  const srv = createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const b = JSON.parse(body || "{}");
+      const sys = b.messages?.find((m: { role: string }) => m.role === "system")?.content ?? "";
+      let out: string;
+      if (sys.includes("意图分析器"))
+        out = '{"theme":"温暖","mood":"治愈","style":"华语抒情","durationSec":100}';
+      else if (sys.includes("创作编导"))
+        out = '{"title":"T","structure":[{"name":"verse","lyrics":"v"},{"name":"chorus","lyrics":"c"}],"arrangement":{"key":"C","bpm":100,"chordProgression":["C-G-Am-F"],"groove":"pop"}}';
+      else if (sys.includes("音乐质量评审"))
+        out = '{"theme":4,"mood":4,"style":4,"comment":"ok"}';
+      else out = "{}";
+      if (!b.stream) {
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({ choices: [{ message: { content: out } }] }));
+        return;
+      }
+      // SSE：推理链 2 帧 + 正文按 24 字符切片
+      res.setHeader("content-type", "text/event-stream");
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "分析意图中…" } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "逐维打分" } }] })}\n\n`);
+      for (let i = 0; i < out.length; i += 24) {
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: out.slice(i, i + 24) } }] })}\n\n`);
+      }
+      res.write("data: [DONE]\n\n");
+      res.end();
+    });
+  });
+  srv.listen(0);
+  const port = (srv.address() as { port: number }).port;
+  return { url: `http://127.0.0.1:${port}/v1`, close: () => new Promise((r) => srv.close(() => r())) };
+}
+
+test("S6-T3 llm_thinking 帧：intent/plan/judge 节点全覆盖，推理/正文双通道聚合=模型输出", async () => {
+  const m = startStreamingLlmMock();
+  const dir = mkdtempSync(join(tmpdir(), "cm-"));
+  try {
+    const job = jobStore.create("sess-think");
+    await jobStore.run(job.id, {
+      prompt: "test",
+      settings: { baseURL: m.url, apiKey: "", model: "m", temperature: 0.5 } as never,
+      engine: new MockAdapter(join(dir, "g")),
+      maxRetries: 1,
+    });
+    const hist = jobStore.historyAfter(job.id, 0);
+    const think = hist.filter((e) => e.type === "llm_thinking");
+    assert.ok(think.length >= 9, `三节点 × start/delta/end 帧（实际 ${think.length}）`);
+    const nodes = new Set(think.map((e) => (e.type === "llm_thinking" ? e.node : "")));
+    assert.deepEqual([...nodes].sort(), ["intent", "judge", "plan"]);
+    // 每调用恰一 start 一 end，end 带 ms
+    for (const n of ["intent", "plan", "judge"]) {
+      const frames = think.filter((e) => e.type === "llm_thinking" && e.node === n && e.callId === think.find((t) => t.type === "llm_thinking" && t.node === n)!.callId);
+      assert.equal(frames.filter((e) => e.type === "llm_thinking" && e.op === "start").length, 1);
+      const end = frames.find((e) => e.type === "llm_thinking" && e.op === "end");
+      assert.ok(end && end.type === "llm_thinking" && (end.ms ?? 0) >= 0);
+    }
+    // 推理链通道出现过（channel=reasoning 的 delta）
+    assert.ok(think.some((e) => e.type === "llm_thinking" && e.channel === "reasoning" && e.delta?.includes("分析意图中")));
+    // 正文 delta 聚合可解析（intent 节点）
+    const intentCallId = think.find((e) => e.type === "llm_thinking" && e.node === "intent")!.callId;
+    const merged = think
+      .filter((e) => e.type === "llm_thinking" && e.callId === intentCallId && e.channel === "content" && e.op === "delta")
+      .map((e) => (e.type === "llm_thinking" ? e.delta : ""))
+      .join("");
+    assert.deepEqual(JSON.parse(merged).theme, "温暖");
+    // 节流生效：正文切片 24 字符/帧，但 delta 帧数 < 原始切片数（80ms/240 字符合并）
+    const intentContentDeltas = think.filter((e) => e.type === "llm_thinking" && e.callId === intentCallId && e.channel === "content").length;
+    assert.ok(intentContentDeltas < Math.ceil(76 / 24) + 6, "delta 帧被节流合并");
+  } finally {
+    await m.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

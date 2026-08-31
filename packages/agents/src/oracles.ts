@@ -1,5 +1,4 @@
 import {
-  chatCompletion,
   extractJson,
   stableInt,
   type LlmSettings,
@@ -10,12 +9,17 @@ import {
   type CreationPlan,
   type Intent,
 } from "@colormax/schema";
+import { llmThinkingCall, type StreamEmitter } from "./stream.ts";
 
-/** 意图分析（LLM 真实调用） */
-export async function createIntent(settings: LlmSettings, prompt: string): Promise<Intent> {
+/** 意图分析（LLM 真实调用，onEvent 发射思考帧） */
+export async function createIntent(
+  settings: LlmSettings,
+  prompt: string,
+  onEvent?: StreamEmitter,
+): Promise<Intent> {
   const raw = await extractJson<Record<string, unknown>>(
     (
-      await chatCompletion(settings, [
+      await llmThinkingCall(settings, [
         {
           role: "system",
           content:
@@ -24,7 +28,7 @@ export async function createIntent(settings: LlmSettings, prompt: string): Promi
             '"extra":string[]}。仅输出 JSON。',
         },
         { role: "user", content: prompt },
-      ])
+      ], { node: "intent", onEvent })
     ).text,
   );
   const intentRaw = repairPlan({ ...raw, durationSec: Number(raw.durationSec ?? 180) });
@@ -81,49 +85,33 @@ function planParse(raw: unknown) {
   return CreationPlanSchema.parse(repairPlan(raw as Record<string, unknown>));
 }
 
-/** 创作规划（LLM 真实调用：歌词结构 + 编曲参数 + 固定种子） */
+const PLAN_SYS =
+  "你是音乐创作编导。基于意图输出创作计划 JSON：" +
+  '{"title":string,"structure":[{"name":"intro|verse|preChorus|chorus|bridge|outro","lyrics":string}]' +
+  '（structure 数组 2 到 12 段）,"arrangement":{"key":string,"bpm":number(40-240),"chordProgression":string[](非空),' +
+  '"groove":string}}。**严格遵守边界**：structure 不超过 12 段、bpm 40-240、chordProgression 至少一个和弦。';
+
+/** 创作规划（LLM 真实调用：歌词结构 + 编曲参数 + 固定种子；onEvent 发射思考帧） */
 export async function createPlan(
   settings: LlmSettings,
   prompt: string,
   intent: Intent,
+  onEvent?: StreamEmitter,
 ): Promise<CreationPlan> {
   const seed = stableInt(prompt, 1_000_000);
+  const first = (): Promise<{ text: string }> =>
+    llmThinkingCall(settings, [
+      { role: "system", content: `${PLAN_SYS}意图：${JSON.stringify(intent)}。仅输出 JSON。` },
+      { role: "user", content: prompt },
+    ], { node: "plan", onEvent });
   try {
-    const raw = await extractJson<Record<string, unknown>>(
-      (
-        await chatCompletion(settings, [
-          {
-            role: "system",
-            content:
-              "你是音乐创作编导。基于意图输出创作计划 JSON：" +
-              '{"title":string,"structure":[{"name":"intro|verse|preChorus|chorus|bridge|outro","lyrics":string}]' +
-              '（structure 数组 2 到 12 段）,"arrangement":{"key":string,"bpm":number(40-240),"chordProgression":string[](非空),' +
-              '"groove":string}}。**严格遵守边界**：structure 不超过 12 段、bpm 40-240、chordProgression 至少一个和弦。' +
-              `意图：${JSON.stringify(intent)}。仅输出 JSON。`,
-          },
-          { role: "user", content: prompt },
-        ])
-      ).text,
-    );
+    const raw = await extractJson<Record<string, unknown>>((await first()).text);
     return planParse({ ...raw, intent, seed });
   } catch (firstErr) {
-    // 兜底①：契约修复（clamp/截断/默认）后重试解析（raw 定义为 try 外变量，JSON 解析失败时 undefined→跳过）
+    // 兜底①：契约修复（clamp/截断/默认）后重试（真实 LLM 常给超界值）
     let raw: Record<string, unknown> | undefined;
     try {
-      raw = await extractJson<Record<string, unknown>>(
-        (await chatCompletion(settings, [
-          {
-            role: "system",
-            content:
-              "你是音乐创作编导。基于意图输出创作计划 JSON：" +
-              '{"title":string,"structure":[{"name":"intro|verse|preChorus|chorus|bridge|outro","lyrics":string}]' +
-              '（structure 数组 2 到 12 段）,"arrangement":{"key":string,"bpm":number(40-240),"chordProgression":string[](非空),' +
-              '"groove":string}}。**严格遵守边界**：structure 不超过 12 段、bpm 40-240、chordProgression 至少一个和弦。' +
-              `意图：${JSON.stringify(intent)}。仅输出 JSON。`,
-          },
-          { role: "user", content: prompt },
-        ])).text,
-      );
+      raw = await extractJson<Record<string, unknown>>((await first()).text);
     } catch (e) {
       throw e;
     }
@@ -133,7 +121,7 @@ export async function createPlan(
       // 兜底②：将解析错误摘要回喂模型，修正一次
       const retryRaw = await extractJson<Record<string, unknown>>(
         (
-          await chatCompletion(settings, [
+          await llmThinkingCall(settings, [
             {
               role: "system",
               content:
@@ -144,7 +132,7 @@ export async function createPlan(
                 '"arrangement":{"key":string,"bpm":number(40-240),"chordProgression":string[]非空,"groove":string}}。仅输出 JSON。',
             },
             { role: "user", content: prompt },
-          ])
+          ], { node: "plan", onEvent })
         ).text,
       );
       return planParse({ ...retryRaw, intent, seed });

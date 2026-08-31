@@ -166,3 +166,83 @@ test("S1-T2f 宽松解析：尾逗号/单引号/缺逗号/注释 → 修复成�
   assert.deepEqual(parseJsonLoose('{"arr":["x" "y"]}'), { arr: ["x", "y"] });
   assert.deepEqual(parseJsonLoose('{ // comment\n "a": 5 }'), { a: 5 });
 });
+
+// ===== Stage 6.1 流式（S6-T1/T2/T3 降级）=====
+function sseServer(format: "openai" | "anthropic"): { url: string; close: () => void } {
+  const server = createServer((_req, res) => {
+    res.setHeader("content-type", "text/event-stream");
+    const w = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    if (format === "openai") {
+      w({ choices: [{ delta: { reasoning_content: "想" } }] });
+      w({ choices: [{ delta: { content: '{"a":' } }] });
+      w({ choices: [{ delta: { content: "1}" } }] });
+      res.write("data: [DONE]\n\n");
+    } else {
+      w({ type: "content_block_delta", delta: { type: "thinking_delta", thinking: "思" } });
+      w({ type: "content_block_delta", delta: { type: "text_delta", text: '{"b":' } });
+      w({ type: "content_block_delta", delta: { type: "text_delta", text: "2}" } });
+      w({ type: "message_stop" });
+    }
+    res.end();
+  });
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+  return { url: `http://127.0.0.1:${port}/v1`, close: () => server.close() };
+}
+
+test("S6-T1 OpenAI 兼容流式：content 增量聚合 + reasoning_content 独立回调", async () => {
+  const s = sseServer("openai");
+  try {
+    let reasoning = "";
+    const chunks: string[] = [];
+    const res = await chatCompletion(
+      { ...DEFAULT_SETTINGS, baseURL: s.url },
+      [{ role: "user", content: "x" }],
+      { stream: true, onChunk: (t) => chunks.push(t), onReasoning: (t) => (reasoning += t) },
+    );
+    assert.equal(res.text, '{"a":1}');
+    assert.deepEqual(chunks, ['{"a":', "1}"]);
+    assert.equal(reasoning, "想");
+  } finally {
+    s.close();
+  }
+});
+
+test("S6-T2 Anthropic Messages 流式：text_delta/thinking_delta 双通道", async () => {
+  const s = sseServer("anthropic");
+  try {
+    let reasoning = "";
+    const chunks: string[] = [];
+    const res = await chatCompletion(
+      { ...DEFAULT_SETTINGS, baseURL: s.url, apiFormat: "anthropic" },
+      [{ role: "user", content: "x" }],
+      { stream: true, onChunk: (t) => chunks.push(t), onReasoning: (t) => (reasoning += t) },
+    );
+    assert.equal(res.text, '{"b":2}');
+    assert.deepEqual(chunks, ['{"b":', "2}"]);
+    assert.equal(reasoning, "思");
+  } finally {
+    s.close();
+  }
+});
+
+test("S6-T3 端点不支持流式（返回 JSON）自动降级：全文单帧回调", async () => {
+  const server = createServer((_req, res) => {
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ choices: [{ message: { content: "plain-text" } }] }));
+  });
+  server.listen(0);
+  const port = (server.address() as { port: number }).port;
+  try {
+    const chunks: string[] = [];
+    const res = await chatCompletion(
+      { ...DEFAULT_SETTINGS, baseURL: `http://127.0.0.1:${port}/v1` },
+      [{ role: "user", content: "x" }],
+      { stream: true, onChunk: (t) => chunks.push(t) },
+    );
+    assert.equal(res.text, "plain-text");
+    assert.deepEqual(chunks, ["plain-text"]);
+  } finally {
+    server.close();
+  }
+});

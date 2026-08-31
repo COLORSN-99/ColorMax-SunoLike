@@ -96,7 +96,7 @@ export interface LlmThinkingEvent {
   callId: string;
   node: ThinkingNode;
   op: "start" | "delta" | "end";
-  seq: number; // 帧内单调序号（合并排序用）
+  channel?: "content" | "reasoning"; // 正文流 / 推理链流（DeepSeek-R1 thinking）
   delta?: string;
   ms?: number; // end 帧：本次调用耗时
 }
