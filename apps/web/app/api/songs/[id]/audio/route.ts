@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import axios from "axios";
 import { sunoApi, detectSystemProxy, decryptClipAudio, type RightsResponse } from "@colormax/suno-gateway";
+import { sunoEnv } from "@/lib/env";
 
 /**
  * GET /api/songs/:id/audio — DRM 解密 → ffmpeg 转码 MP3 缓存（同源 Range、全端可播）

@@ -3,12 +3,13 @@ import { jobStore } from "@colormax/agents";
 import { readSettings } from "@colormax/llm";
 import { MockAdapter, SunoAdapter } from "@colormax/engine";
 import { join } from "node:path";
+import { sunoEnv } from "@/lib/env";
 
 /** 引擎重建（与 POST /api/jobs 同策略）：接续需要新的 engine 实例 */
 function resolveEngine() {
-  const cookies = (process.env.SUNO_COOKIES ?? "").split("||").map((c) => c.trim()).filter(Boolean);
+  const { cookies, fingerprint, userAgent } = sunoEnv();
   if (cookies.length === 0) return new MockAdapter(join(process.cwd(), "public/generated"));
-  return new SunoAdapter({ cookies, publicDir: join(process.cwd(), "public/generated") });
+  return new SunoAdapter({ cookies, publicDir: join(process.cwd(), "public/generated"), fingerprint, userAgent });
 }
 
 /** POST /api/jobs/:id/resume — 从失败快照接续（跳过已完成节点，仅重跑失败点及之后；同进程内存） */

@@ -1,7 +1,10 @@
 /*
  * MODIFIED FOR @colormax/suno-gateway (2026-08-30, LGPL-3.0-or-later)
  * vendor 来源: gcui-art/suno-api; 二次开发: ①移除浏览器/CAPTCHA 重依赖→fail-fast ②transport 可注入
- * ③常量 UA ④logger 控制台化 ⑤wait_audio 轮询上限可配
+ * ③常量 UA ④logger 控制台化 ⑤wait_audio 轮询上限可配 ⑥cookie 会话池（pool.ts）
+ * ⑩strict-complete 完成判定 ⑪clip 详情取 media_urls ⑭DRM 解密链（getJwt/fetchRights+decrypt.ts）
+ * ⑮onPoll 轮询进度回调 ⑯指纹档 hybrid/web（buildSunoHeaders，拦截器统一注入）⑰captchaGate 公开闸门预检
+ * （编号与 SPEC §4 二次开发点清单一致；仅回调/头族/方法签名扩展，不引入项目依赖，LGPL 边界清晰）
  */
 import axios from 'axios';
 import type { AxiosInstance } from 'axios';
@@ -16,6 +19,48 @@ globalForSunoApi.sunoApiCache = cache;
 
 const logger = { info: (...a: unknown[]) => console.log('[suno-api]', ...a), error: (...a: unknown[]) => console.error('[suno-api]', ...a) };
 export const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+
+/**
+ * 二次开发点⑯ 指纹对齐（R1 调研 2026-08-31）：
+ * - hybrid（默认，= 上游 gcui 原行为，我方实证可出歌）：Android app 标记头 + 桌面 macOS UA——
+ *   本身字段互相矛盾，但 Suno 服务端按 app API 处理（generate/v2 + mv + token），保留零回归。
+ * - web（自洽档）：全 macOS Chrome 浏览器头族（无 app 标记，client-hints 版本从 UA 派生），
+ *   cookie 来自真实浏览器时理论上与风控画像更一致；需 A/B 实测后定默认。
+ */
+export type SunoFingerprint = "hybrid" | "web";
+
+/** 从 Chrome UA 提取主版本号（用于 client-hints 自洽） */
+export const chromeMajor = (ua: string): string => ua.match(/Chrome\/(\d+)/)?.[1] ?? "130";
+
+export function buildSunoHeaders(fingerprint: SunoFingerprint, userAgent: string, deviceId?: string): Record<string, string> {
+  const base: Record<string, string> = {
+    'Affiliate-Id': 'undefined',
+    ...(deviceId ? { 'Device-Id': `"${deviceId}"` } : {}),
+    'User-Agent': userAgent,
+  };
+  if (fingerprint === "web") {
+    const v = chromeMajor(userAgent);
+    return {
+      ...base,
+      'x-suno-client': 'Web 1.0.0',
+      'sec-ch-ua': `"Google Chrome";v="${v}", "Chromium";v="${v}", "Not_A Brand";v="24"`,
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"macOS"',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Origin': 'https://suno.com',
+      'Referer': 'https://suno.com/',
+    };
+  }
+  // hybrid：上游原头族（逐字保留）
+  return {
+    ...base,
+    'x-suno-client': 'Android prerelease-4nt180t 1.0.42',
+    'X-Requested-With': 'com.suno.android',
+    'sec-ch-ua': '"Chromium";v="130", "Android WebView";v="130", "Not?A_Brand";v="99"',
+    'sec-ch-ua-mobile': '?1',
+    'sec-ch-ua-platform': '"Android"',
+  };
+}
 export const DEFAULT_MODEL = 'chirp-v3-5';
 
 export interface AudioInfo {
@@ -87,28 +132,22 @@ class SunoApi {
   private waitAudioMs: number;
   private cookies: Record<string, string | undefined>;
   private readonly transport?: AxiosInstance;
+  private readonly fingerprintHeaders: Record<string, string>;
 
 
-  constructor(cookies: string, options?: { transport?: AxiosInstance; userAgent?: string; waitAudioMs?: number }) {
+  constructor(cookies: string, options?: { transport?: AxiosInstance; userAgent?: string; waitAudioMs?: number; fingerprint?: SunoFingerprint }) {
     this.transport = options?.transport;
     this.waitAudioMs = options?.waitAudioMs ?? 300_000;
     this.userAgent = options?.userAgent ?? DEFAULT_USER_AGENT;
     this.cookies = cookie.parse(cookies);
     this.deviceId = this.cookies.ajs_anonymous_id || randomUUID();
-    this.client = this.transport ?? axios.create({
-      withCredentials: true,
-      headers: {
-        'Affiliate-Id': 'undefined',
-        'Device-Id': `"${this.deviceId}"`,
-        'x-suno-client': 'Android prerelease-4nt180t 1.0.42',
-        'X-Requested-With': 'com.suno.android',
-        'sec-ch-ua': '"Chromium";v="130", "Android WebView";v="130", "Not?A_Brand";v="99"',
-        'sec-ch-ua-mobile': '?1',
-        'sec-ch-ua-platform': '"Android"',
-        'User-Agent': this.userAgent
-      }
-    });
+    // 二次开发点⑯: 指纹对齐——请求头族由 buildSunoHeaders 统一构造（hybrid=上游原行为零回归 / web=全 macOS Chrome 自洽档）。
+    // 注意：注入 transport 时 axios.create 的 headers 分支被跳过——指纹统一经请求拦截器注入（两条路径一致生效）。
+    this.fingerprintHeaders = buildSunoHeaders(options?.fingerprint ?? "hybrid", this.userAgent, this.deviceId);
+    this.client = this.transport ?? axios.create({ withCredentials: true });
     this.client.interceptors.request.use(config => {
+      for (const [k, v] of Object.entries(this.fingerprintHeaders))
+        if (!(k in config.headers)) config.headers[k] = v; // 请求级显式头优先
       if (this.currentToken && !config.headers.Authorization)
         config.headers.Authorization = `Bearer ${this.currentToken}`;
       const cookiesArray = Object.entries(this.cookies).map(([key, value]) => 
@@ -213,11 +252,20 @@ class SunoApi {
   }
 
   private async captchaRequired(): Promise<boolean> {
+    return (await this.captchaGate()).required;
+  }
+
+  /**
+   * 二次开发点⑰ 闸门预检（fail-fast 友好化）：公开 c/check 查询——
+   * generate 前调用，required=true 直接抛 CaptchaRequiredError（携带 captcha_version），
+   * 不再撞 500/静默失败；错误经 CookiePool 轮换与失败编排（category=captcha）出可操作建议。
+   */
+  public async captchaGate(): Promise<{ required: boolean; version?: number }> {
     const resp = await this.client.post(`${SunoApi.BASE_URL}/api/c/check`, {
       ctype: 'generation'
     });
     logger.info(resp.data);
-    return resp.data.required;
+    return { required: Boolean(resp.data?.required), version: resp.data?.captcha_version };
   }
 
   /**
@@ -683,22 +731,23 @@ class SunoApi {
   }
 }
 
-export const sunoApi = async (cookie?: string, options?: { transport?: AxiosInstance; userAgent?: string; waitAudioMs?: number }) => {
+export const sunoApi = async (cookie?: string, options?: { transport?: AxiosInstance; userAgent?: string; waitAudioMs?: number; fingerprint?: SunoFingerprint }) => {
   const resolvedCookie = cookie && cookie.includes('__client') ? cookie : process.env.SUNO_COOKIE; // Check for bad `Cookie` header (It's too expensive to actually parse the cookies *here*)
   if (!resolvedCookie) {
     logger.info('No cookie provided! Aborting...\nPlease provide a cookie either in the .env file or in the Cookie header of your request.')
     throw new Error('Please provide a cookie either in the .env file or in the Cookie header of your request.');
   }
 
-  // Check if the instance for this cookie already exists in the cache
-  const cachedInstance = cache.get(resolvedCookie);
+  // Check if the instance for this cookie already exists in the cache（缓存键含指纹档：A/B 探针可并存两档实例）
+  const cacheKey = `${resolvedCookie}::${options?.fingerprint ?? "hybrid"}::${options?.userAgent ?? ""}`;
+  const cachedInstance = cache.get(cacheKey);
   if (cachedInstance)
     return cachedInstance;
 
   // If not, create a new instance and initialize it
   const instance = await new SunoApi(resolvedCookie, options).init();
   // Cache the initialized instance
-  cache.set(resolvedCookie, instance);
+  cache.set(cacheKey, instance);
 
   return instance;
 };

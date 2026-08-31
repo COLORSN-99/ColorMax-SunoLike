@@ -3,19 +3,20 @@ import { readSettings } from "@colormax/llm";
 import { jobStore } from "@colormax/agents";
 import { MockAdapter, SunoAdapter } from "@colormax/engine";
 import { join } from "node:path";
+import { sunoEnv } from "@/lib/env";
 
 /**
  * 引擎选择（Stage 3 新模式：vendor 本地二次开发）：
  * 配置 SUNO_COOKIES（会话池，多 cookie 以 || 分隔）→ 真实 Suno 引擎（验收/演示链路）；
- * 未配置 → Mock 引擎（开发期调试），响应中提示。
+ * 未配置 → Mock 引擎（开发期调试），响应中提示。指纹档见 lib/env（⑯）。
  */
 function resolveEngine() {
-  const cookies = (process.env.SUNO_COOKIES ?? "").split("||").map((c) => c.trim()).filter(Boolean);
+  const { cookies, fingerprint, userAgent } = sunoEnv();
   if (cookies.length === 0) {
     return { engine: new MockAdapter(join(process.cwd(), "public/generated")), mode: "mock" as const };
   }
   return {
-    engine: new SunoAdapter({ cookies, publicDir: join(process.cwd(), "public/generated") }),
+    engine: new SunoAdapter({ cookies, publicDir: join(process.cwd(), "public/generated"), fingerprint, userAgent }),
     mode: "suno" as const,
   };
 }

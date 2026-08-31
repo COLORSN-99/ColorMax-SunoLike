@@ -103,7 +103,10 @@ Job          { id; sessionId; phase: 'intent'|'plan'|'dispatch'|'suno'|'align'|'
 ```
 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL（默认 openai 兼容本地）
 SUNO_COOKIES=…                          # cookie 会话池（分号分隔多 cookie；本地 vendor 二次开发，无独立服务）
+SUNO_FINGERPRINT=hybrid|web             # ⑯ 指纹档（默认 hybrid=上游原行为零回归；web=全 macOS Chrome 自洽头族，A/B 探针后择优）
+SUNO_UA=…                               # ⑯ 覆盖 User-Agent（传入与 cookie 导出浏览器完全一致的 UA；client-hints 版本自动派生自洽）
 ```
+A/B 探针：`cd apps/web && node --env-file=.env.local ../../scripts/gate-probe.mjs 3`（只读 c/check+认证链，不触发生成；数据落 `.data/gate-probe.jsonl`）。**需系统代理在线**（detectSystemProxy 自动读取；代理关闭时直连 DNS 污染=网络层全灭，与风控无关——2026-08-31 首轮实测即此情况）。
 
 ## 10. 实现层次（Stage 分层：按需求拆分的优先实现层次）
 

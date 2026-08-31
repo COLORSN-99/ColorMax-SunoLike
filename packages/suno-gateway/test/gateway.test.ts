@@ -180,7 +180,7 @@ test("S6-T6 渲染事件透传：tool_call 步骤链 + vendor onPoll → suno_pr
     });
     assert.ok(res.audioUrl.startsWith("/generated/"));
     const toolSeq = events.filter((e) => e.type === "tool_call").map((e) => `${e.tool}:${e.op}`);
-    for (const expect of ["quotaCheck:start", "customGenerate:start", "feedConfirm:start", "clipDetail:start", "download:start", "decrypt:start", "saveFile:start"]) {
+    for (const expect of ["captchaGate:start", "quotaCheck:start", "customGenerate:start", "feedConfirm:start", "clipDetail:start", "download:start", "decrypt:start", "saveFile:start"]) {
       assert.ok(toolSeq.includes(expect), `缺步骤事件 ${expect}（实际 ${toolSeq.join(",")}）`);
     }
     assert.ok(toolSeq.includes("saveFile:end"), "全链 end 帧收尾");
@@ -190,8 +190,49 @@ test("S6-T6 渲染事件透传：tool_call 步骤链 + vendor onPoll → suno_pr
     assert.equal(p.callId, "suno-1");
     assert.equal(p.stage, "poll");
     assert.equal(typeof p.elapsedMs, "number");
-    assert.ok(toolSeq.every((t) => t.startsWith("quotaCheck") || t.startsWith("customGenerate") || t.startsWith("feedConfirm") || t.startsWith("clipDetail") || t.startsWith("download") || t.startsWith("decrypt") || t.startsWith("saveFile")));
+    assert.ok(toolSeq.every((t) => t.startsWith("captchaGate") || t.startsWith("quotaCheck") || t.startsWith("customGenerate") || t.startsWith("feedConfirm") || t.startsWith("clipDetail") || t.startsWith("download") || t.startsWith("decrypt") || t.startsWith("saveFile")));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ===== R1 ⑯ 指纹对齐 + ⑰ 闸门预检 =====
+import { buildSunoHeaders, chromeMajor } from "../src/index.ts";
+
+test("G7-1 ⑯ 指纹头族：hybrid 保留上游 Android 标记（零回归）；web 全 macOS Chrome 自洽（无 app 标记）", () => {
+  const hybrid = buildSunoHeaders("hybrid", "Mozilla/5.0 (Macintosh) Chrome/130.0.0.0 Safari/537.36", "dev-1");
+  assert.equal(hybrid["X-Requested-With"], "com.suno.android");
+  assert.equal(hybrid["sec-ch-ua-platform"], '"Android"');
+  assert.equal(hybrid["sec-ch-ua-mobile"], "?1");
+  assert.equal(hybrid["User-Agent"], "Mozilla/5.0 (Macintosh) Chrome/130.0.0.0 Safari/537.36"); // UA 逐字透传
+
+  const web = buildSunoHeaders("web", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36");
+  assert.equal(web["X-Requested-With"], undefined, "web 档无 Android app 标记");
+  assert.equal(web["sec-ch-ua-platform"], '"macOS"');
+  assert.equal(web["sec-ch-ua-mobile"], "?0");
+  assert.ok(web["sec-ch-ua"]?.includes('v="139"'), "client-hints 版本从 UA 派生（自洽）");
+  assert.ok(web["sec-ch-ua"]?.includes("Google Chrome"));
+  assert.equal(web["Origin"], "https://suno.com");
+  assert.ok(web["User-Agent"].includes("Chrome/139"));
+});
+
+test("G7-2 chromeMajor 版本派生", () => {
+  assert.equal(chromeMajor("...Chrome/139.0.0.0 Safari..."), "139");
+  assert.equal(chromeMajor("no chrome here"), "130"); // 兜底
+});
+
+test("G7-3 ⑰ 闸门预检：c/check required=true → 生成前 CaptchaRequiredError（不撞 500/不进 generate）", async () => {
+  const ctx: MockCtx = { credits: 10, captcha: true, feedStatus: "complete", calls: [] };
+  const adapter = new SunoGatewayAdapter({
+    cookies: ["__client=xx; ajs_anonymous_id=g7"],
+    publicDir: mkdtempSync(join(tmpdir(), "g7-")),
+    transport: stubTransport(ctx),
+    waitAudioMs: 500,
+  });
+  await assert.rejects(adapter.render(REQ), (e: unknown) => {
+    assert.ok(e instanceof CaptchaRequiredError, "闸门 fail-fast 抛 CaptchaRequiredError");
+    assert.ok(ctx.calls.some((c) => c.url.includes("/api/c/check")), "预检确实打了 c/check");
+    assert.ok(!ctx.calls.some((c) => c.url.includes("/api/generate/v2/")), "required=true 时不进入 generate");
+    return true;
+  });
 });

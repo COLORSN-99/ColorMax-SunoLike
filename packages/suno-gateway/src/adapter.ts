@@ -6,7 +6,7 @@ import type { AxiosInstance } from "axios";
 import axios from "axios";
 import type { AgentStreamEvent } from "@colormax/schema";
 import { detectSystemProxy } from "./proxy.ts";
-import { sunoApi, CaptchaRequiredError, DEFAULT_MODEL } from "../vendor/SunoApi.ts";
+import { sunoApi, CaptchaRequiredError, DEFAULT_MODEL, type SunoFingerprint } from "../vendor/SunoApi.ts";
 import { CookiePool } from "./pool.ts";
 import { decryptClipAudio } from "./decrypt.ts";
 
@@ -29,6 +29,8 @@ export interface SunoGatewayOptions {
   publicDir: string;
   transport?: AxiosInstance;
   waitAudioMs?: number;
+  fingerprint?: SunoFingerprint; // ⑯ 指纹档（默认 hybrid=上游行为；web=全 macOS Chrome 自洽档）
+  userAgent?: string;            // 与 cookie 导出浏览器一致时传入（A/B 探针用）
 }
 
 export interface SunoRenderRequest {
@@ -108,7 +110,13 @@ export class SunoGatewayAdapter {
     const api = await sunoApi(cookie, {
       transport: this.transport(),
       waitAudioMs: this.opts.waitAudioMs,
+      fingerprint: this.opts.fingerprint,
+      userAgent: this.opts.userAgent,
     });
+    // ⑰ 闸门预检：required=true → fail-fast CaptchaRequiredError（走 cookie 轮换/失败编排，不再撞 500）
+    const gate = await step("captchaGate", () => api.captchaGate(), (g) => (g.required ? `⚠ 需验证 captcha_version=${g.version ?? "?"}` : "放行"));
+    if (gate.required)
+      throw new CaptchaRequiredError(`Suno 风控闸门要求验证（captcha_version=${gate.version ?? "?"}）：请在浏览器 suno.com/create 人工过一次验证，或轮换 SUNO_COOKIES 后发送「继续」接续`);
     // 配额预检（get_limit 等价：/api/billing/info/）
     await step("quotaCheck", async () => {
       const c = (await api.get_credits()) as { credits_left: number };

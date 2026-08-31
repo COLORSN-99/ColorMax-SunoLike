@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import axios from "axios";
 import { sunoApi, detectSystemProxy } from "@colormax/suno-gateway";
+import { sunoEnv } from "@/lib/env";
 
 /** GET /api/songs — 最近生成歌曲（浏览器会话播放/下载；Suno 源链直挂） */
 export async function GET() {
-  const cookies = (process.env.SUNO_COOKIES ?? "").split("||").map((c) => c.trim()).filter(Boolean);
+  const { cookies, ...fp } = sunoEnv();
   if (cookies.length === 0) return NextResponse.json({ songs: [], note: "未配置 SUNO_COOKIES" });
   try {
     const proxy = detectSystemProxy();
@@ -12,7 +13,7 @@ export async function GET() {
       timeout: 20_000,
       ...(proxy ? { proxy: { host: proxy.host, port: proxy.port, protocol: "http" as const } } : {}),
     });
-    const api = await sunoApi(cookies[0]!, { transport });
+    const api = await sunoApi(cookies[0]!, { transport, ...fp });
     const clips = await api.get(undefined, "1");
     const songs = [];
     for (const c of clips.slice(0, 12)) {

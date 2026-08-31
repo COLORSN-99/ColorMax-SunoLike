@@ -8,7 +8,7 @@
 2. 逆向 web 通道的**社区基座已死**：gcui-art/suno-api（我们的 vendor 上游）2025-12-14 公开求交接无人维护；其官方反验证码方案（2Captcha+Playwright）在 issue 区大量失败报告（#263/#258/#211）。我们 fail-fast 的 vendor 分支短期可自维护，但**稳定性的天花板由 Suno 风控方决定**。
 3. 第三方托管转售通道**真实存在且商业化**：sunor.cc（$0.10/首，明示 unofficial）、sunoapi.org（credit 制，登录可见价）；同时**有退出者**（PiAPI 首页公告"不提供 Suno API"，kie.ai/suno 路径 404）——该市场在洗牌，供应商存续性是第一风险。
 4. 我们自己的触发画像样本太少（1 次 required:false 日志 + 1 次冷却期失败），**触发条件矩阵必须从"调研"转为"埋点测量"**——现有失败编排+事件历史环正好是现成的测量基建（低成本高价值动作）。
-5. 一个**可能直接降低我方触发率的自身缺陷**：vendor 硬编码 Android 客户端 UA/头族（upstream 为 Vercel 服务器场景伪造移动端），与我们真实的 macOS Chrome cookie 指纹三件套不一致——不一致本身可能就是风控信号。gcui README 明确"macOS 触发率低于 Linux/Windows"。
+5. 实施期自查修正了一个更根本的缺陷（原判断"Android UA 与 macOS cookie 不一致"只对一半）：DEFAULT_USER_AGENT 本就是 macOS Chrome，真正的洞是——**gateway 生产路径总注入自建 proxy transport，而上游把整族指纹头挂在 `axios.create({headers})` 分支，注入即被架空 → 生产请求实际裸发 axios 默认头（零伪装）**；Android 标记（x-suno-client 等）在注入路径下从未生效。gcui README 另明确"macOS 触发率低于 Linux/Windows"。
 
 ## 1. 线一：触发条件画像
 
@@ -41,6 +41,8 @@
 | 多账号轮换（已实现 CookiePool） | $10-20/账号/月 | 摊薄频率维度触发；封号风险未证实但真实存在；适合"演示日 N 账号待命" |
 
 **合规**：Suno ToS 禁止未授权自动化访问（条款常识，未逐字核）；RIAA 诉讼背景下 Suno 有强化反爬的动机。**演示/个人项目用途风险可控；对外服务化转售用途 = 高法律/稳定性风险，本报告不背书**。
+
+> **实施记录（2026-08-31，A 组落地）**：⑯ 指纹档 `hybrid|web`（buildSunoHeaders 两档全自洽；`web`=全 macOS Chrome 头族；顺带修复"注入 transport 时上游头族整体失效"的隐藏缺陷——现经拦截器统一注入，读侧四路由收口 `lib/env.ts`）+ ⑰ captchaGate 生成前预检 fail-fast（required=true 直接进失败编排，不再撞 500），G7×3 契约测试。**用户决定：不接中间商（B 组废弃）**。首轮 A/B 探针（scripts/gate-probe.mjs）因系统代理关闭、直连遇 DNS 污染全灭（网络层，非风控信号）——待代理在线复跑后择优定默认档。
 
 ## 3. 线三：替代生成通道（逐项核实存在性，2026-08-31）
 
