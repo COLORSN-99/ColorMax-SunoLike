@@ -101,6 +101,8 @@ function startLlmMock(): { url: string; close: () => Promise<void> } {
         out = '{"title":"T","structure":[{"name":"verse","lyrics":"v"},{"name":"chorus","lyrics":"c"}],"arrangement":{"key":"C","bpm":100,"chordProgression":["C-G-Am-F"],"groove":"pop"}}';
       else if (sys.includes("音乐质量评审"))
         out = '{"theme":4,"mood":4,"style":4,"comment":"ok"}';
+      else if (sys.includes("任务失败诊断器"))
+        out = "评审降级（非 JSON，测 classifyFallback）";
       else out = "{}";
       res.setHeader("content-type", "application/json");
       res.end(JSON.stringify({ choices: [{ message: { content: out } }] }));
@@ -335,4 +337,87 @@ test("S6-T3 llm_thinking 帧：intent/plan/judge 节点全覆盖，推理/正文
     await m.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ===== Stage 6.2 失败编排 =====
+function flakyEngine(failFirst: boolean): import("@colormax/engine").EngineAdapter & { calls: number } {
+  const real = new MockAdapter(mkdtempSync(join(tmpdir(), "cm-flaky-")));
+  const eng = { calls: 0, async render(req: never, hooks?: never) { eng.calls++; if (eng.calls === 1 && failFirst) throw new Error("CAPTCHA 风控拦截"); return real.render(req, hooks); } };
+  return eng as never;
+}
+
+test("S6-T9/T10 失败编排：state_saved → error_review_delta* → error_review → failed(causeKind=captcha)", async () => {
+  const m = startLlmMock(); // 评审 LLM 也走 mock（返回 {}→无 JSON → classifyFallback 正则降级 captcha）
+  const dir = mkdtempSync(join(tmpdir(), "cm-"));
+  try {
+    const job = jobStore.create("sess-f6");
+    const events: JobEvent[] = [];
+    jobStore.subscribe(job.id, (e) => events.push(e));
+    const eng = flakyEngine(true);
+    await jobStore.run(job.id, {
+      prompt: "test", settings: { baseURL: m.url, apiKey: "", model: "m", temperature: 0.5 } as never,
+      engine: eng as never, maxRetries: 1,
+    });
+    const kinds = events.map((e) => e.type);
+    assert.ok(kinds.includes("state_saved"), "state_saved 帧");
+    assert.ok(kinds.includes("error_review"), "error_review 帧");
+    const failed = events.find((e) => e.type === "failed");
+    assert.ok(failed && failed.type === "failed");
+    assert.equal(failed.causeKind, "captcha", "classifyFallback 命中 CAPTCHA");
+    assert.ok(jobStore.canResume(job.id), "失败快照就绪可接续");
+  } finally {
+    await m.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("S6-T11/T13 resume 接续：跳过已完成节点（仅重跑 suno 起）；成功清快照；dropResume 主动放弃", async () => {
+  const m = startLlmMock();
+  try {
+    const job = jobStore.create("sess-r");
+    const eng = flakyEngine(true); // 首次 suno 失败，接续第二次成功
+    await jobStore.run(job.id, {
+      prompt: "test", settings: { baseURL: m.url, apiKey: "", model: "m", temperature: 0.5 } as never,
+      engine: eng as never, maxRetries: 0,
+    });
+    assert.equal(jobStore.get(job.id)?.status, "failed");
+    assert.equal(eng.calls, 1);
+    const events: JobEvent[] = [];
+    jobStore.subscribe(job.id, (e) => events.push(e));
+    await jobStore.resume(job.id);
+    const resumeFrame = events.find((e) => e.type === "resume_applied");
+    assert.ok(resumeFrame && resumeFrame.type === "resume_applied" && resumeFrame.fromPhase === "suno", "接续首帧 fromPhase=suno");
+    assert.equal(jobStore.get(job.id)?.status, "done", "接续后完成");
+    assert.equal(eng.calls, 2);
+    assert.ok(!jobStore.canResume(job.id), "成功清快照");
+    // 意图/规划不重跑：resume 历史里 intent 的 onPhase 不再新增（仅 suno/align/judge/deliver）
+    const phases = events.filter((e) => e.type === "phase").map((e) => (e.type === "phase" ? e.phase : ""));
+    assert.ok(!phases.includes("intent") && !phases.includes("plan"), "跳过已完成节点");
+  } finally {
+    await m.close();
+  }
+});
+
+test("S6-T12 intentRouter 三分类（mock LLM）：继续→resume/换版本→restart/无关→new；端点故障→new 保守", async () => {
+  const { routeAfterFailure } = await import("../src/review.ts");
+  const srv = createServer((req, res) => {
+    let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => {
+      res.setHeader("content-type", "application/json");
+      const sys = JSON.parse(b).messages?.[0]?.content ?? "";
+      // 用 user 内容里的关键词判别，模拟 LLM 输出单词
+      const user = JSON.parse(b).messages?.[1]?.content ?? "";
+      void sys;
+      const out = /继续|接着|重试/.test(user) ? "resume" : /换.*版本|再来一版|重来/.test(user) ? "restart" : "new";
+      res.end(JSON.stringify({ choices: [{ message: { content: out } }] }));
+    });
+  });
+  srv.listen(0);
+  const port = (srv.address() as { port: number }).port;
+  const settings = { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: "", model: "m", temperature: 0 } as never;
+  try {
+    assert.equal(await routeAfterFailure(settings, { phase: "suno", error: "CAPTCHA" }, "继续把这首歌做完"), "resume");
+    assert.equal(await routeAfterFailure(settings, { phase: "suno", error: "x" }, "换个版本重来"), "restart");
+    assert.equal(await routeAfterFailure(settings, { phase: "suno", error: "x" }, "写一首摇滚的歌"), "new");
+  } finally { srv.close(); }
+  // 端点故障 → 保守 new（不自动接续）
+  assert.equal(await routeAfterFailure({ baseURL: "http://127.0.0.1:9/v1", apiKey: "", model: "m", temperature: 0 } as never, { phase: "suno", error: "x" }, "继续"), "new");
 });

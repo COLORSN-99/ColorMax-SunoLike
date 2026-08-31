@@ -84,6 +84,7 @@ export interface Msg {
   error?: string;
   roundId?: string;
   jobId?: string;
+  causeKind?: string;
   // error_review（Step 6）
   category?: string;
   resolvableByCli?: boolean;
@@ -204,29 +205,61 @@ export function applyEvent(segs: Segment[], e: Evt): Segment[] {
     case "failed": {
       const roundId = e.roundId ?? "x";
       const cleared = segs.filter((s) => s.kind !== "thinking" && s.kind !== "terminal" && s.kind !== "suno");
-      cleared.push({
-        kind: "error",
-        roundId,
-        headline: "任务执行失败",
-        category: "unknown",
-        steps: ["正在评审错误…"],
-        resolvableByCli: false,
-        raw: e.error ?? "",
-        reviewStreaming: true,
-        reviewText: "",
-      });
+      const ei = cleared.findIndex((s) => s.kind === "error");
+      if (ei >= 0) {
+        const cur = cleared[ei];
+        if (cur.kind === "error")
+          cleared[ei] = {
+            ...cur,
+            raw: e.error ?? cur.raw,
+            reviewStreaming: false,
+            category: e.category ?? cur.category,
+            steps: cur.steps.length ? cur.steps : ["稍后重试；展开「调试详情」查看原始错误"],
+          };
+      } else {
+        cleared.push({
+          kind: "error",
+          roundId,
+          headline: "任务执行失败",
+          category: "unknown",
+          steps: ["稍后重试；展开「调试详情」查看原始错误"],
+          resolvableByCli: false,
+          raw: e.error ?? "",
+          reviewStreaming: false,
+          reviewText: "",
+        });
+      }
       return cleared;
     }
     case "error_review_delta": {
-      const i = findIdx(segs, (s) => s.kind === "error");
-      if (i < 0) return segs;
+      let i = findIdx(segs, (s) => s.kind === "error");
+      if (i < 0) {
+        // 评审帧先于 failed 到达（服务端顺序：state_saved→review→failed）：即时建卡
+        segs = [
+          ...segs,
+          {
+            kind: "error", roundId: e.roundId ?? "x", headline: "任务执行失败", category: "unknown",
+            steps: [], resolvableByCli: false, raw: "", reviewStreaming: true, reviewText: "",
+          },
+        ];
+        i = segs.length - 1;
+      }
       const cur = segs[i];
       if (cur.kind !== "error") return segs;
       return segs.map((s, j) => (j === i ? { ...cur, reviewText: cur.reviewText + (e.delta ?? "") } : s));
     }
     case "error_review": {
-      const i = findIdx(segs, (s) => s.kind === "error");
-      if (i < 0) return segs;
+      let i = findIdx(segs, (s) => s.kind === "error");
+      if (i < 0) {
+        segs = [
+          ...segs,
+          {
+            kind: "error", roundId: e.roundId ?? "x", headline: "任务执行失败", category: "unknown",
+            steps: [], resolvableByCli: false, raw: "", reviewStreaming: true, reviewText: "",
+          },
+        ];
+        i = segs.length - 1;
+      }
       const cur = segs[i];
       if (cur.kind !== "error") return segs;
       return segs.map((s, j) =>

@@ -34,10 +34,25 @@ export interface AgentRunContext {
   onPhase?: (phase: JobPhase, payload?: unknown) => void;
   onEvent?: (evt: AgentStreamEvent) => void; // Stage 6.1：流式细粒度帧透传（不传静默）
   roundId?: string; // 轮次分组键（失败清除/接续）
+  resumeAfter?: JobPhase; // Stage 6.2：从失败落点接续（跳过已完成节点，沿用快照 channels）
+  onSnapshot?: (s: AgentState) => void; // 每个节点产出后回调（失败快照累积）
+  seed?: Partial<AgentState>; // resume 种子状态（失败快照的已完成 channels）
   judge?: JudgeDeps; // 测试注入
 }
 
+type GraphNode = "intentNode" | "planNode" | "dispatchNode" | "sunoNode" | "alignNode" | "judgeNode" | "deliverNode";
+
+const NODE_OF_PHASE: Partial<Record<JobPhase, GraphNode>> = {
+  intent: "intentNode", plan: "planNode", dispatch: "dispatchNode",
+  suno: "sunoNode", align: "alignNode", judge: "judgeNode", deliver: "deliverNode",
+};
+
 export function buildAgentGraph(ctx: AgentRunContext) {
+  const snap: AgentState = { prompt: "", retries: 0, maxRetries: 0, ...ctx.seed };
+  const record = (patch: Partial<AgentState>) => {
+    Object.assign(snap, patch);
+    ctx.onSnapshot?.(snap);
+  };
   const graph = new StateGraph<AgentState>({
     channels: {
       prompt: { reducer: (_a: string, b: string) => b },
@@ -54,12 +69,14 @@ export function buildAgentGraph(ctx: AgentRunContext) {
       ctx.onPhase?.("intent");
       const intent = await createIntent(ctx.settings, s.prompt, ctx.onEvent);
       ctx.onPhase?.("intent", intent);
+      record({ intent });
       return { intent };
     })
     .addNode("planNode", async (s: AgentState) => {
       ctx.onPhase?.("plan");
       const plan = await createPlan(ctx.settings, s.prompt, s.intent!, ctx.onEvent);
       ctx.onPhase?.("plan", plan);
+      record({ plan });
       return { plan };
     })
     .addNode("dispatchNode", async (s: AgentState) => {
@@ -87,22 +104,23 @@ export function buildAgentGraph(ctx: AgentRunContext) {
         { emit: ctx.onEvent, callId: randomUUID() },
       );
       ctx.onPhase?.("suno", { audioUrl: song.audioUrl, durationSec: song.durationSec });
-      return {
-        song: {
-          sunoId: `s_${plan.seed}_${Date.now()}`,
-          title: plan.title,
-          lyrics: plan.structure.map((x) => `${x.name}: ${x.lyrics}`).join("\n"),
-          style: plan.intent.style,
-          audioUrl: song.audioUrl,
-          durationSec: song.durationSec,
-          sourceFormat: song.sourceFormat,
-        } satisfies SongResult,
-      };
+      const songResult = {
+        sunoId: `s_${plan.seed}_${Date.now()}`,
+        title: plan.title,
+        lyrics: plan.structure.map((x) => `${x.name}: ${x.lyrics}`).join("\n"),
+        style: plan.intent.style,
+        audioUrl: song.audioUrl,
+        durationSec: song.durationSec,
+        sourceFormat: song.sourceFormat,
+      } satisfies SongResult;
+      record({ song: songResult });
+      return { song: songResult };
     })
     .addNode("alignNode", async (s: AgentState) => {
       ctx.onPhase?.("align");
       const aligned = alignSong(s.plan!, s.song!);
       ctx.onPhase?.("align", aligned);
+      record({ aligned });
       return { aligned };
     })
     .addNode(
@@ -112,14 +130,18 @@ export function buildAgentGraph(ctx: AgentRunContext) {
         const deps: JudgeDeps = ctx.judge
           ? { ...ctx.judge, onEvent: ctx.onEvent }
           : { settings: ctx.settings, onEvent: ctx.onEvent };
-        const report = await judgeSong(deps, s.aligned!, s.retries);
+        let report = await judgeSong(deps, s.aligned!, s.retries);
         const nextRetries = report.verdict === "retry" ? s.retries + 1 : s.retries;
+        // give-up：重派超限仍 retry → 定论 give-up（schema 枚举接线，交付最优+报告）
+        if (report.verdict === "retry" && nextRetries >= s.maxRetries)
+          report = { ...report, verdict: "give-up" };
         ctx.onEvent?.({
           type: "tool_call", callId: "ruleChecks", node: "judge", tool: "ruleChecks", op: "end",
           level: report.rules.every((r) => !r.blocking || r.passed) ? "info" : "warn",
-          message: report.rules.map((r) => `${r.passed ? "✓" : "✗"} ${r.name}${r.blocking ? "" : "（软）"}${r.note ? " " + r.note : ""}`).join("\n"),
+          message: report.rules.map((r) => `${r.passed ? "✓" : "✗"} ${r.name}${r.blocking === false ? "（软）" : ""}${r.note ? " " + r.note : ""}`).join("\n"),
         });
         ctx.onPhase?.("judge", report);
+        record({ report, retries: nextRetries });
         return { report, retries: nextRetries };
       },
       { ends: ["deliverNode", "dispatchNode"] },
@@ -127,8 +149,13 @@ export function buildAgentGraph(ctx: AgentRunContext) {
     .addNode("deliverNode", async () => {
       ctx.onPhase?.("deliver");
       return {};
-    })
-    .addEdge(START, "intentNode")
+    });
+
+  // Stage 6.2：resume——START 直连失败落点节点（已完成节点由 initial 快照供数据）；
+  // give-up 不再重派：judge 超限直连 deliver。
+  const entry = (ctx.resumeAfter && NODE_OF_PHASE[ctx.resumeAfter]) || "intentNode";
+  graph
+    .addEdge(START, entry)
     .addEdge("intentNode", "planNode")
     .addEdge("planNode", "dispatchNode")
     .addEdge("dispatchNode", "sunoNode")
@@ -153,6 +180,9 @@ export async function runAgent(
     onPhase?: (phase: JobPhase, payload?: unknown) => void;
     onEvent?: (evt: AgentStreamEvent) => void;
     roundId?: string;
+    resumeAfter?: JobPhase; // Stage 6.2 接续：跳过已完成节点
+    seed?: Partial<AgentState>;
+    onSnapshot?: (s: AgentState) => void;
     judge?: JudgeDeps;
     maxRetries?: number;
   },
@@ -160,8 +190,9 @@ export async function runAgent(
   const app = buildAgentGraph(args);
   const state = await app.invoke({
     prompt: args.prompt,
-    retries: 0,
+    retries: args.seed?.retries ?? 0,
     maxRetries: args.maxRetries ?? 3,
+    ...(args.seed ?? {}),
   });
   const aligned = AlignedSongSchema.parse(state.aligned);
   const report = JudgeReportSchema.parse(state.report);

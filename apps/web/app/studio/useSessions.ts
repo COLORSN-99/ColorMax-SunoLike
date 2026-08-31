@@ -164,6 +164,31 @@ export function useSessions() {
       setMsgs(withUser);
       if (kv.current && sid) saveMsgs(kv.current, sid, withUser);
       try {
+        // Stage 6.2：上一轮存在失败卡（error 段）→ 意图三分类（resume 接续 / restart 重开 / new 新任务）
+        const lastFailed = [...withUser].reverse().find(
+          (m) => m.role === "assistant" && m.jobId && m.segments.some((s) => s.kind === "error"),
+        );
+        if (lastFailed?.jobId) {
+          try {
+            const rt = await fetch(`/api/jobs/${lastFailed.jobId}/intent`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ message: trimmed }),
+            });
+            const { action } = (await rt.json().catch(() => ({ action: "new" }))) as { action?: string };
+            if (action === "resume") {
+              const rs = await fetch(`/api/jobs/${lastFailed.jobId}/resume`, { method: "POST" });
+              if (rs.ok) {
+                await consume(lastFailed.jobId, lastFailed.lastSeq ?? 0, withUser, sid);
+                return;
+              }
+            } else if (action === "restart") {
+              await fetch(`/api/jobs/${lastFailed.jobId}/resume`, { method: "DELETE" }); // 丢弃快照
+            }
+          } catch {
+            /* 路由不可用 → 正常新任务 */
+          }
+        }
         const created = await fetch("/api/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -201,7 +226,7 @@ export function useSessions() {
         if (msg.segments.some((s) => s.kind === "text" && s.text.includes("状态已丢失"))) continue; // 去重
         cur = upsertAssistant(cur, msg.jobId!, [
           ...msg.segments,
-          { kind: "text", text: "⚠ 该任务的服务端状态已丢失（进程重启）。请重新发起，或等待接续能力（Stage 6.2）。" },
+          { kind: "text", text: "⚠ 该任务的服务端状态已丢失（进程重启——接续快照仅存活于同进程）。请重新发起创作。" },
         ], msg.lastSeq);
       } else if (a.type === "replay" || a.type === "watch") {
         // replay：after=0 全量补帧；watch：after=已见游标续播

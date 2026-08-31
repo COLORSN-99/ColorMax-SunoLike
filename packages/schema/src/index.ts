@@ -124,7 +124,38 @@ export interface SunoProgressEvent {
   note?: string;
 }
 
-export type AgentStreamEvent = LlmThinkingEvent | ToolCallEvent | SunoProgressEvent;
+/** 失败快照就绪（Stage 6.2 接续底座）：phase=失败落点 */
+export interface StateSavedEvent {
+  type: "state_saved";
+  phase: string;
+}
+
+/** 接续生效（下一轮 resume 后首帧） */
+export interface ResumeAppliedEvent {
+  type: "resume_applied";
+  fromPhase: string;
+}
+
+/** 失败评审流式正文（LLM 结构化建议，raw error 不直达用户） */
+export interface ErrorReviewDeltaEvent {
+  type: "error_review_delta";
+  callId: string;
+  delta: string;
+}
+
+/** 失败评审终态 */
+export interface ErrorReviewEvent {
+  type: "error_review";
+  callId: string;
+  category: "llm" | "network" | "cookie" | "captcha" | "quota" | "engine" | "schema" | "unknown";
+  resolvableByCli: boolean;
+  cliSuggestion?: string;
+  headline: string;
+  steps: string[];
+}
+
+export type AgentStreamEvent = LlmThinkingEvent | ToolCallEvent | SunoProgressEvent |
+  StateSavedEvent | ResumeAppliedEvent | ErrorReviewDeltaEvent | ErrorReviewEvent;
 
 /** Stage 6.1：渲染/引擎细粒度事件透传（engine 与 suno-gateway 共享，避免反向依赖） */
 export interface StreamHooks {

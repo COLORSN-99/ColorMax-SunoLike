@@ -151,6 +151,11 @@ export function ErrorCard({ seg }: { seg: Extract<Segment, { kind: "error" }> })
       <ul style={{ margin: "0 0 6px", paddingLeft: 18, fontSize: 12 }}>
         {steps.map((t, i) => <li key={i}>{t}</li>)}
       </ul>
+      {!seg.reviewStreaming && (
+        <div style={{ fontSize: 11, color: "#7c7c85", marginBottom: 4 }}>
+          修复后直接发送「继续」，Agent 自动判断从失败落点接续（不重跑已完成步骤）
+        </div>
+      )}
       {seg.category === "llm" && <Link href="/settings"><span style={{ color: "#6a6acd", fontSize: 12 }}>打开 LLM 设置 ↗</span></Link>}
       {seg.resolvableByCli && seg.cliSuggestion && (
         <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center" }}>
