@@ -15,11 +15,11 @@ pnpm install
 #    SUNO_COOKIES=__client=...;ajs_anonymous_id=...   # 多账号 || 分隔（浏览器 DevTools 从 suno.com 导出）
 #    也可启动后在网页「LLM 设置」面板配置（写入同一文件，增量合并不覆盖 cookie）
 
-# 3) 构建 + 启动（或 `pnpm --filter @colormax/web dev` 开发模式）
+# 3) 构建 + 启动（端口固定 3123——3000 让给本机 OrbStack；或 `pnpm --filter @colormax/web dev` 开发模式）
 pnpm --filter @colormax/web build
-pnpm --filter @colormax/web start -p 3000
+pnpm --filter @colormax/web start
 
-# 4) 打开 http://localhost:3000 —— 创作室输入一句话
+# 4) 打开 http://localhost:3123 —— 创作室输入一句话
 #    过程全程流式可见：LLM 思考折叠块 / 工具 terminal / Suno 生成进度 / 评判报告
 #    生成完成 → 「作品看板」直接播放（服务端 DRM 解密 + MP3 转码缓存）
 #    未配置 SUNO_COOKIES 时自动用 Mock 引擎（开发调试链路，验收请配真实会话）
