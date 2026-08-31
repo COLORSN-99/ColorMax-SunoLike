@@ -306,6 +306,8 @@ Stage 1 ──► Stage 2 ──► Stage 3 ──► Stage 6（6.1 流式可观
 
 ## 14. Suno 风控调研任务书（R1——后续单独沟通，本轮只立项）
 
+> **状态更新 2026-08-31：调研已完成**，结论与决策点见 [risk-control-research.md](risk-control-research.md)。要点修正：官方公开 API 不存在；vendor 上游 gcui/suno-api 已弃维护（2025-12 求交接）；Replicate 无商业 Suno 入口（本文旧版"Replicate类"假设**不成立**）；转售市场现洗牌（PiAPI 退出/Kie 404），存活代表 sunor.cc $0.10/首（unofficial）；下一步 = 指纹对齐 + 闸门预检 + 触发率埋点（A 组），B 组托管备胎视 10 连发实测决定。
+
 **目标**：把「生成端 CAPTCHA/风控」从偶发阻塞变成可预期、可运维的能力。**调研三条线**：
 
 1. **触发条件画像**：哪些变量决定 token 校验强度（账号等级/生成频率/IP 与设备指纹一致性/session 新鲜度/新模型灰度期）；产出=触发概率矩阵 + 最小冷却间隔建议（实测 suno.com 面板 vs vendor 路径的差异）。
