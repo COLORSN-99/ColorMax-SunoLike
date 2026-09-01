@@ -82,6 +82,7 @@ Job          { id; sessionId; phase: 'intent'|'plan'|'dispatch'|'suno'|'align'|'
 - **实际实现（2026-08-31 定版，替换旧 AI SDK/useChat 草案——从未落地，且与 antd x 栈冲突）**：`@ant-design/x`（Bubble/Sender/Conversations/Welcome）+ **手写 SSE reader**（`fetch('/api/jobs/:id/events')` + `getReader`），不引第三方聊天框架。
 - **segment 流式模型**：assistant 消息 = `segments[]`，事件经 `applyEvent` 纯 reducer 归约。块类型：`thinking`（LLM 推理，默认折叠/展开固定高滚动/折叠态尾行摘要）、`terminal`（工具执行，等宽高亮，高度随输出）、`suno`（生成进度条：done/total+elapsed）、`plan/judge/result` 卡片、`error`（结构化失败，raw 只入调试折叠区）。
 - 纯函数分层便于 node:test：`lib/segments.ts`（reducer）、`lib/sse.ts`（帧解析）、`lib/storage.ts`（持久化，见 §7）。设计原则不变：能用现成组件就不手搓，但对话流的**流式归约/持久化**自持（第三方模板难以匹配 Agent 阶段事件语义）。
+- **视觉体系（2026-09-01 Analog Console 重塑）**：唯一主题源 `app/theme.ts`（antd token）+ `app/globals.css`（`--cm-*` 变量与机台类）；根 layout 单 ConfigProvider（三份局部副本已删）。隐喻=模拟录音台：墨黑金属底/深棕拉丝面板/琥珀信号灯/VU 等待表/黑胶档案柜/走带式 START·REC 输入台；本地字体 Instrument Serif（display）+ Space Grotesk（UI）经 next/font/local 打包；图标 lucide-react；动效全部响应 prefers-reduced-motion。行为层（reducer/SSE/持久化/服务商档案）零改动。
 
 ## 7. 数据模型与会话持久化（ADR-001）
 
