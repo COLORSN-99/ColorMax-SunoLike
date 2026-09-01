@@ -35,7 +35,7 @@
 | Agent 框架 | LangGraph（@langchain/langgraph JS）——Leader 编排图 + Subagent 节点 + 评判条件边重派 |
 | Suno 调用 | **vendor gcui-art/suno-api 源码 + 本地二次开发**（packages/suno-gateway：cookie 会话池轮换/失效剔除、fail-fast CAPTCHA、transport 可注入、轮询上限可配；LGPL-3.0 保留许可+修改声明）；开发期 MockAdapter 兜底（**验收/演示走 SunoAdapter 真实链路**） |
 | 前端 chat UI | **antd v6 + @ant-design/x（Codex 暗色壳）+ 手写 SSE 流式 segment 渲染**（2026-08-31 定版，替换早期 Vercel AI SDK 草案——与实际事件流语义不匹配未采用） |
-| LLM | **OpenAI/Anthropic 兼容双格式 + 设置面板（无 JSON mock）**：供应商/BaseURL/API Key/Model/API 格式/maxTokens/温度，按角色（意图/规划/评判）可分别配置；全链路流式（正文+推理链双通道，端点不支持自动降级） |
+| LLM | **多服务商兼容 + 设置面板（无 JSON mock，2026-09-01 升级）**：预置目录（DeepSeek/阿里Qwen/智谱/Kimi/硅基流动/OpenAI/Grok/Ollama/自定义；BaseURL/协议/推荐模型/余额链接自动填充）+ 按角色（意图/规划/评判）可分别配置；全链路流式（正文+推理链双通道，端点不支持自动降级）；余额不足（402）给充值+「继续」接续指引 |
 | 会话持久化 | **localStorage 过渡（ADR-001）**：不上 DB——待更换 Agent runtime/工作流编排时整体迁 SQL（详见 TECH-SPEC §7） |
 
 ## 4. MVP 范围

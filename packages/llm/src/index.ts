@@ -29,11 +29,7 @@ export const DEFAULT_SETTINGS: LlmSettings = {
   thinking: false,
 };
 
-export const PROVIDER_PRESETS: Record<string, Partial<LlmSettings>> = {
-  DeepSeek: { provider: "DeepSeek", baseURL: "https://api.deepseek.com", model: "deepseek-v4-flash", apiFormat: "openai" },
-  "DeepSeek (Anthropic)": { provider: "DeepSeek", baseURL: "https://api.deepseek.com/anthropic", apiFormat: "anthropic" },
-  Ollama: { provider: "Ollama", baseURL: "http://localhost:11434/v1", apiFormat: "openai", model: "qwen2.5" },
-};
+export * from "./providers.ts";
 
 export const SETTINGS_FILE = ".env.local";
 

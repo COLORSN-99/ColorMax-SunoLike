@@ -11,6 +11,12 @@ type Category = (typeof CATEGORIES)[number];
 export function classifyFallback(raw: string): ErrorReviewEvent {
   const mk = (category: Category, headline: string, steps: string[], resolvableByCli = false, cliSuggestion?: string): ErrorReviewEvent =>
     ({ type: "error_review", callId: "fallback", category, resolvableByCli, cliSuggestion, headline, steps });
+  if (/LLM HTTP 402|Insufficient Balance|余额不足|欠费|arrears/i.test(raw))
+    return mk("llm", "LLM 服务商余额不足（HTTP 402）", [
+      "到服务商控制台充值（DeepSeek：platform.deepseek.com → Balance/余额）",
+      "或到「LLM 设置」切换到其他有额度的服务商 / 本地 Ollama",
+      "充值或换端点后，直接发送「继续」从失败落点接续，不重跑已完成步骤",
+    ]);
   if (/CAPTCHA/i.test(raw))
     return mk("captcha", "Suno 风控验证（CAPTCHA）", [
       "浏览器打开 suno.com/create 人工过一次验证后重试",

@@ -124,6 +124,8 @@ export function SunoProgressBlock({ seg }: { seg: Extract<Segment, { kind: "suno
 }
 
 function friendlyCategory(raw: string): { kind: string; title: string; tips: string[] } {
+  if (/LLM HTTP 402|Insufficient Balance|余额不足|欠费|arrears/i.test(raw))
+    return { kind: "llm", title: "LLM 服务商余额不足（HTTP 402）", tips: ["到服务商控制台充值（DeepSeek：platform.deepseek.com → Balance）", "或到「LLM 设置」切换到其他有额度的服务商/本地 Ollama", "之后直接发送「继续」从失败落点接续"] };
   if (/fetch failed|ECONNREFUSED|ETIMEDOUT|network|LLM/i.test(raw))
     return { kind: "llm", title: "LLM 端点问题", tips: ["检查「LLM 设置」端点/Key/Model", "本地端点示例 http://localhost:11434/v1"] };
   if (/CAPTCHA/i.test(raw))
@@ -278,7 +280,7 @@ export function SegmentView({ seg, onOpenBoard }: { seg: Segment; onOpenBoard: (
     case "text":
       return <div style={{ fontSize: 13, color: "#e8e8ea", margin: "3px 0", whiteSpace: "pre-wrap" }}>{seg.text}</div>;
     case "thinking":
-      return <ThinkingBlock seg={seg} />;
+      return seg.content || seg.reasoning ? <ThinkingBlock seg={seg} /> : null; // LLM 首帧前即报错→无内容不渲染空气泡
     case "terminal":
       return <TerminalBlock seg={seg} />;
     case "suno":

@@ -246,3 +246,29 @@ test("S6-T3 端点不支持流式（返回 JSON）自动降级：全文单帧回
     server.close();
   }
 });
+
+// ===== 多服务商预置目录 =====
+import { PROVIDERS, providerBase, chatUrl } from "../src/index.ts";
+
+test("S1-T6 服务商目录：chatUrl 拼接各家版本前缀正确 + 结构完整", () => {
+  const map = Object.fromEntries(PROVIDERS.map((p) => [p.id, p]));
+  // 拼接验算（与后端 chatUrl 一致，面板填的 base 即生效值）
+  const urlOf = (id: string, fmt: "openai" | "anthropic") =>
+    chatUrl({ ...DEFAULT_SETTINGS, baseURL: providerBase(map[id], fmt), apiFormat: fmt });
+  assert.equal(urlOf("deepseek", "openai"), "https://api.deepseek.com/chat/completions");
+  assert.equal(urlOf("deepseek", "anthropic"), "https://api.deepseek.com/anthropic/v1/messages");
+  assert.equal(urlOf("zhipu", "openai"), "https://open.bigmodel.cn/api/paas/v4/chat/completions"); // 非 /v1
+  assert.equal(urlOf("qwen", "openai"), "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
+  assert.equal(urlOf("kimi", "openai"), "https://api.moonshot.cn/v1/chat/completions");
+  assert.equal(urlOf("ollama", "openai"), "http://localhost:11434/v1/chat/completions");
+  // 结构约束：国内直连优先；每家 defaultModel ∈ models（custom 除外，自由填）
+  const domestic = PROVIDERS.filter((p) => p.access === "domestic");
+  assert.ok(domestic.length >= 3, "国内直连家数");
+  for (const p of PROVIDERS) {
+    if (p.id === "custom") continue;
+    assert.ok(p.openaiBase, p.id + " openaiBase");
+    assert.ok(!p.openaiBase!.endsWith("/"), p.id + " base 不应以 / 结尾");
+    assert.ok(p.defaultModel === "" || p.models.some((m) => m.id === p.defaultModel), p.id + " defaultModel 在 models 内");
+    assert.ok(p.consoleUrl && p.docsUrl, p.id + " 有取key/文档链接");
+  }
+});

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ConfigProvider, theme, Select, InputNumber, Switch, Tag, Alert, Spin } from "antd";
+import { ConfigProvider, theme, Select, AutoComplete, InputNumber, Switch, Tag, Alert, Spin } from "antd";
+import { PROVIDERS, providerBase, type ProviderPreset } from "@colormax/llm/providers";
 
 type ApiFormat = "openai" | "anthropic";
 
@@ -17,51 +18,80 @@ interface FormState {
   thinking: boolean;
 }
 
-const PRESETS: { label: string; value: Partial<FormState> }[] = [
-  { label: "DeepSeek（OpenAI 兼容）", value: { provider: "DeepSeek", baseURL: "https://api.deepseek.com", model: "deepseek-v4-flash", apiFormat: "openai", maxTokens: 4096 } },
-  { label: "DeepSeek（Anthropic 端点）", value: { provider: "DeepSeek", baseURL: "https://api.deepseek.com/anthropic", apiFormat: "anthropic", maxTokens: 4096 } },
-  { label: "Ollama/LM Studio（本地）", value: { provider: "Ollama", baseURL: "http://localhost:11434/v1", model: "qwen2.5", apiFormat: "openai", maxTokens: 2048 } },
-];
+const ACCESS_GROUP: Record<ProviderPreset["access"], string> = {
+  domestic: "国内可直连",
+  proxy: "需代理 / 科学上网",
+  local: "本地（离线/零成本）",
+};
+
+/** 按 access 分组供下拉 optgroup（自定义项永远排最后） */
+const groupedProviders = () => {
+  const order: ProviderPreset["access"][] = ["domestic", "proxy", "local"];
+  const groups = order.map((a) => ({
+    label: ACCESS_GROUP[a],
+    options: PROVIDERS.filter((p) => p.access === a && p.id !== "custom").map((p) => ({ label: p.label, value: p.id })),
+  })).filter((g) => g.options.length);
+  const custom = PROVIDERS.find((p) => p.id === "custom");
+  if (custom) groups.push({ label: "自定义", options: [{ label: custom.label, value: custom.id }] });
+  return groups;
+};
 
 export default function Settings() {
   const [form, setForm] = useState<FormState>({
-    provider: "",
-    baseURL: "",
-    apiKey: "",
-    model: "",
-    apiFormat: "openai",
-    temperature: 0.8,
-    maxTokens: 4096,
-    thinking: false,
+    provider: "", baseURL: "", apiKey: "", model: "",
+    apiFormat: "openai", temperature: 0.8, maxTokens: 4096, thinking: false,
   });
+  const [pid, setPid] = useState("custom");
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
 
+  const preset = useMemo(() => PROVIDERS.find((p) => p.id === pid) ?? PROVIDERS[PROVIDERS.length - 1], [pid]);
+  const supportsAnthropic = Boolean(preset.anthropicBase);
+
   useEffect(() => {
-    fetch("/api/settings")
-      .then((r) => r.json())
-      .then((s) =>
-        setForm({
-          provider: s.provider ?? "",
-          baseURL: s.baseURL ?? "",
-          apiKey: s.apiKey ?? "",
-          model: s.model ?? "",
-          apiFormat: s.apiFormat ?? "openai",
-          temperature: Number(s.temperature ?? 0.8),
-          maxTokens: Number(s.maxTokens ?? 4096),
-          thinking: Boolean(s.thinking),
-        }),
-      );
+    fetch("/api/settings").then((r) => r.json()).then((s) => {
+      setForm({
+        provider: s.provider ?? "", baseURL: s.baseURL ?? "", apiKey: s.apiKey ?? "",
+        model: s.model ?? "", apiFormat: s.apiFormat ?? "openai",
+        temperature: Number(s.temperature ?? 0.8), maxTokens: Number(s.maxTokens ?? 4096), thinking: Boolean(s.thinking),
+      });
+      // 反推当前服务商（按 openaiBase/anthropicBase 匹配），匹配不到=自定义
+      const hit = PROVIDERS.find((p) => p.openaiBase === s.baseURL || p.anthropicBase === s.baseURL);
+      setPid(hit?.id ?? "custom");
+    });
   }, []);
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => ({ ...f, [k]: v }));
 
+  const applyProvider = (id: string) => {
+    const p = PROVIDERS.find((x) => x.id === id);
+    setPid(id);
+    if (!p || p.id === "custom") return; // 自定义：保持现有字段不动
+    const fmt = p.defaultFormat;
+    setForm((f) => ({
+      ...f,
+      provider: p.label.replace(/\s*·.*$/, "").replace(/（.*）/, ""),
+      apiFormat: fmt,
+      baseURL: providerBase(p, fmt),
+      model: p.defaultModel,
+      maxTokens: p.defaultMaxTokens,
+    }));
+  };
+
+  const changeFormat = (fmt: ApiFormat) => {
+    set("apiFormat", fmt);
+    if (preset.id === "custom") return;
+    if (fmt === "anthropic" && !preset.anthropicBase) {
+      setMsg({ kind: "err", text: `${preset.label} 未预置 Anthropic 端点——保持 OpenAI 兼容或改用自定义 BaseURL` });
+      return;
+    }
+    set("baseURL", providerBase(preset, fmt));
+  };
+
   const save = async () => {
     setMsg(null);
     const res = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
     });
     const data = await res.json();
     if (!res.ok) setMsg({ kind: "err", text: `保存失败：${data.error ?? res.status}` });
@@ -81,12 +111,12 @@ export default function Settings() {
     }
   };
 
-  const applyPreset = (label: string) => {
-    const p = PRESETS.find((x) => x.label === label)?.value;
-    if (p) setForm((f) => ({ ...f, ...p }));
-  };
+  const linkRow = (url?: string, label?: string) =>
+    url ? (
+      <a href={url} target="_blank" rel="noreferrer" style={{ color: "#6a6acd", fontSize: 11, marginRight: 12 }}>{label} ↗</a>
+    ) : null;
 
-  const row = (label: React.ReactNode, control: React.ReactNode, extra?: string) => (
+  const row = (label: React.ReactNode, control: React.ReactNode, extra?: React.ReactNode) => (
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontSize: 12, color: "#9a9aa0", marginBottom: 4 }}>{label}</div>
       {control}
@@ -94,91 +124,72 @@ export default function Settings() {
     </div>
   );
 
+  const inputStyle: React.CSSProperties = { width: "100%", padding: 8, background: "#0f0f11", border: "1px solid #2a2a2e", borderRadius: 6, color: "#e8e8ea" };
+
   return (
     <ConfigProvider theme={{ algorithm: theme.darkAlgorithm, token: { colorBgBase: "#0d0d0f", colorBgContainer: "#161618", colorBorder: "#2a2a2e", colorText: "#e8e8ea", fontSize: 13 } }}>
-      <main style={{ maxWidth: 640, margin: "0 auto", padding: 28 }}>
-        <h1 style={{ fontSize: 20 }}>LLM 接入设置 <Tag>DeepSeek 字段集</Tag>{" "}
+      <main style={{ maxWidth: 680, margin: "0 auto", padding: 28 }}>
+        <h1 style={{ fontSize: 20 }}>LLM 接入设置 <Tag>多服务商</Tag>{" "}
           <Link href="/"><span style={{ color: "#6a6acd" }}>返回创作室</span></Link>
         </h1>
         <p style={{ fontSize: 12, color: "#9a9aa0" }}>
-          参考 <a href="https://api-docs.deepseek.com/zh-cn/" target="_blank" rel="noreferrer" style={{ color: "#6a6acd" }}>DeepSeek 官方接入文档</a>：
-          OpenAI 兼容 base_url = <code>https://api.deepseek.com</code>；Anthropic 兼容 base_url = <code>https://api.deepseek.com/anthropic</code>；
-          其他 OpenAI/Anthropic 兼容供应商同样适用（仅真实 API Key，无 mock 分支）。
+          选择服务商自动填充 BaseURL / API 格式 / 推荐模型；各家版本前缀差异（智谱 /api/paas/v4、阿里 /compatible-mode/v1、
+          DeepSeek Anthropic /anthropic/v1）已内联，无需手改。也可切「自定义」填任意 OpenAI/Anthropic 兼容端点（仅真实 Key，无 mock）。
         </p>
         <div style={{ background: "#141417", border: "1px solid #2a2a2e", borderRadius: 10, padding: 16, marginTop: 12 }}>
           {row(
-            "供应商预设",
-            <Select
-              style={{ width: "100%" }}
-              placeholder="选择预设（自动填充字段）"
-              options={PRESETS.map((p) => ({ label: p.label, value: p.label }))}
-              onChange={applyPreset}
-            />,
-            "也可完全手动填写",
-          )}
-          {row(
-            "供应商名称",
-            <input style={{ width: "100%", padding: 8, background: "#0f0f11", border: "1px solid #2a2a2e", borderRadius: 6, color: "#e8e8ea" }}
-              value={form.provider} placeholder="DeepSeek" onChange={(e) => set("provider", e.target.value)} />,
+            "服务商",
+            <Select style={{ width: "100%" }} value={pid} options={groupedProviders()} onChange={applyProvider} />,
+            preset.access === "proxy" && (
+              <span style={{ color: "#e8b86a" }}>⚠ 该服务商需代理/科学上网，国内 IP 直连会被拒</span>
+            ),
           )}
           {row(
             "API 格式",
             <Select
-              style={{ width: "100%" }}
-              value={form.apiFormat}
+              style={{ width: "100%" }} value={form.apiFormat}
               options={[
                 { label: "OpenAI 兼容（/chat/completions）", value: "openai" },
-                { label: "Anthropic Message 兼容（/messages）", value: "anthropic" },
+                { label: supportsAnthropic ? "Anthropic Message 兼容（/messages）" : "Anthropic Message 兼容（该服务商未预置）", value: "anthropic", disabled: pid !== "custom" && !supportsAnthropic },
               ]}
-              onChange={(v) => {
-                set("apiFormat", v as ApiFormat);
-                if (!form.baseURL) return;
-                // 格式切换联动官方端点 hint（不覆盖用户手动 URL）
-                if (v === "anthropic" && form.baseURL === "https://api.deepseek.com") set("baseURL", "https://api.deepseek.com/anthropic");
-                if (v === "openai" && form.baseURL === "https://api.deepseek.com/anthropic") set("baseURL", "https://api.deepseek.com");
-              }}
+              onChange={changeFormat}
             />,
           )}
           {row(
             "BaseURL",
-            <input style={{ width: "100%", padding: 8, background: "#0f0f11", border: "1px solid #2a2a2e", borderRadius: 6, color: "#e8e8ea" }}
-              value={form.baseURL} placeholder="https://api.deepseek.com" onChange={(e) => set("baseURL", e.target.value)} />,
+            <input style={inputStyle} value={form.baseURL} placeholder="https://api.openai.com/v1" onChange={(e) => set("baseURL", e.target.value)} />,
+            <span>{linkRow(preset.docsUrl, "接入文档")}{linkRow(preset.consoleUrl, "获取 API Key")}{linkRow(preset.balanceUrl, "查看余额 / 充值")}{preset.note}</span>,
           )}
           {row(
             "API Key",
-            <input type="password" style={{ width: "100%", padding: 8, background: "#0f0f11", border: "1px solid #2a2a2e", borderRadius: 6, color: "#e8e8ea" }}
-              value={form.apiKey} placeholder="sk-…" onChange={(e) => set("apiKey", e.target.value)} />,
-            "写入 .env.local（不入库；本地端点可留空）",
+            <input type="password" style={inputStyle} value={form.apiKey} placeholder="sk-…" onChange={(e) => set("apiKey", e.target.value)} />,
+            "写入 .env.local（不入库；本地/自托管端点可留空）",
           )}
           {row(
             "模型名称",
-            <input style={{ width: "100%", padding: 8, background: "#0f0f11", border: "1px solid #2a2a2e", borderRadius: 6, color: "#e8e8ea" }}
-              value={form.model} placeholder="deepseek-v4-flash / deepseek-v4-pro" onChange={(e) => set("model", e.target.value)} />,
-            "DeepSeek：deepseek-v4-flash / deepseek-v4-pro / deepseek-v4-flash-vision-exp",
+            <AutoComplete
+              style={{ width: "100%" }} value={form.model}
+              options={preset.models.map((m) => ({ label: `${m.label}${m.reasoning ? " · 推理" : ""}`, value: m.id }))}
+              onChange={(v) => set("model", v)}
+              placeholder={preset.defaultModel || "自定义模型名"}
+              filterOption={(input, option) => (option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
+            />,
+            preset.models.length ? preset.models.map((m) => m.id).join(" / ") : "自由填写（Ollama = 你 pull 的模型名）",
           )}
-          <div style={{ display: "flex", gap: 16 }}>
-            {row(
-              "Max Tokens",
-              <InputNumber min={1} max={32768} value={form.maxTokens} onChange={(v) => set("maxTokens", Number(v ?? 4096))} />,
-              "DeepSeek 默认 4096",
-            )}
-            {row(
-              "Temperature",
-              <InputNumber min={0} max={2} step={0.1} value={form.temperature} onChange={(v) => set("temperature", Number(v ?? 0.8))} />,
-            )}
-            {row("思考模式 (thinking)", <Switch checked={form.thinking} onChange={(v) => set("thinking", v)} />, "DeepSeek V4 reasoning 参数")}
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {row("供应商名称", <input style={{ ...inputStyle, width: 160 }} value={form.provider} placeholder="DeepSeek" onChange={(e) => set("provider", e.target.value)} />)}
+            {row("Max Tokens", <InputNumber min={1} max={32768} value={form.maxTokens} onChange={(v) => set("maxTokens", Number(v ?? 4096))} />)}
+            {row("Temperature", <InputNumber min={0} max={2} step={0.1} value={form.temperature} onChange={(v) => set("temperature", Number(v ?? 0.8))} />)}
+            {row("思考模式", <Switch checked={form.thinking} onChange={(v) => set("thinking", v)} />, "透传 reasoning/思考链")
+            }
           </div>
           <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
-            <button style={{ padding: "8px 16px", border: "none", borderRadius: 8, background: "#1d1d1f", color: "#fff", cursor: "pointer" }} onClick={save}>
-              保存
-            </button>
+            <button style={{ padding: "8px 16px", border: "none", borderRadius: 8, background: "#1d1d1f", color: "#fff", cursor: "pointer" }} onClick={save}>保存</button>
             <button style={{ padding: "8px 16px", border: "1px solid #2a2a2e", borderRadius: 8, background: "#141417", color: "#b8b8bd", cursor: "pointer" }} onClick={test} disabled={testing}>
               {testing ? <Spin size="small" style={{ marginRight: 6 }} /> : null}测试连接
             </button>
           </div>
-          {msg && (
-            <Alert style={{ marginTop: 10 }} type={msg.kind === "ok" ? "success" : "error"} showIcon message={msg.text} />
-          )}
+          {msg && <Alert style={{ marginTop: 10 }} type={msg.kind === "ok" ? "success" : "error"} showIcon message={msg.text} />}
         </div>
       </main>
     </ConfigProvider>

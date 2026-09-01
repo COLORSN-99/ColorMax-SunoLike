@@ -421,3 +421,14 @@ test("S6-T12 intentRouter 三分类（mock LLM）：继续→resume/换版本→
   // 端点故障 → 保守 new（不自动接续）
   assert.equal(await routeAfterFailure({ baseURL: "http://127.0.0.1:9/v1", apiKey: "", model: "m", temperature: 0 } as never, { phase: "suno", error: "x" }, "继续"), "new");
 });
+
+test("S6-T15 402 专项：LLM 余额不足走 classifyFallback 给出充值/切换/继续三步指引（category=llm）", async () => {
+  const { classifyFallback } = await import("../src/review.ts");
+  const r = classifyFallback('LLM HTTP 402: {"error":{"message":"Insufficient Balance","type":"unknown_error"}}');
+  assert.equal(r.category, "llm");
+  assert.ok(/余额不足/.test(r.headline), r.headline);
+  assert.ok(r.steps.some((s) => /充值|Balance/.test(s)), "含充值指引");
+  assert.ok(r.steps.some((s) => /继续/.test(s)), "含继续接续指引");
+  // 优先级：LLM 402 不被误判为 Suno 配额（quota 分支）
+  assert.equal(r.category !== "quota", true);
+});

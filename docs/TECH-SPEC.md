@@ -73,7 +73,8 @@ Job          { id; sessionId; phase: 'intent'|'plan'|'dispatch'|'suno'|'align'|'
 
 ## 5. LLM 设置面板（无 mock 契约）
 
-- 设置页字段（真实 API Key 接口，2026-08-30 定版，对齐 DeepSeek「接入 DeepSeek」示例）：**供应商名称 / Base URL / Model / API Key / API 格式下拉（OpenAI 兼容 / Anthropic Messages 兼容）/ maxTokens / 温度 / thinking 开关**；三角色（intent/plan/judge）可各自覆盖 model/temperature。
+- 设置页字段（真实 API Key 接口，2026-09-01 多服务商升级）：**服务商下拉（9 预置 + 自定义）/ API 格式 / BaseURL / API Key / Model（AutoComplete 推荐+自由填）/ maxTokens / 温度 / thinking**；选中服务商自动填充各家 base/格式/推荐模型，并给「获取 API Key / 查看余额·充值 / 接入文档」直达链接；三角色（intent/plan/judge）可各自覆盖 model/temperature。
+- **服务商预置目录 `packages/llm/providers.ts`（单一事实源，子路径 `@colormax/llm/providers` 纯数据导出——客户端不拖入 node:fs）**：DeepSeek（OpenAI+Anthropic 双兼容）/ 阿里百炼 Qwen（/compatible-mode/v1）/ 智谱 GLM（/api/paas/v4）/ Kimi（OpenAI+Anthropic）/ 硅基流动 / OpenAI 官方 / xAI Grok / Ollama 本地 / 自定义；`access` 标国内直连/需代理/本地；各家版本前缀差异内联，`chatUrl` 拼接已逐一验算（S1-T6）。LLM 类失败（含 HTTP 402 余额不足）经评审/降级分类给充值+「继续」接续指引。
 - 后端封装 `packages/llm`：`chatCompletion` 支持 OpenAI 与 Anthropic `/messages` 双格式；**可选 `stream` + `onChunk/onReasoning`**（DeepSeek-R1 `reasoning_content` 推理链 + 正文双通道；端点不支持流式自动降级一次性）；写入 `.env.local` 增量合并（保留 `SUNO_COOKIES` 等非 LLM 键——防覆盖）；**所有阶段调用真实 LLM，无 mock JSON 分支**；配置缺失时前端引导。输出契约有破损预修复 + zod repairPlan + 自纠错回喂。
 
 ## 6. 前端集成（chat UI）
