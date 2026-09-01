@@ -6,7 +6,7 @@ import type { AxiosInstance } from "axios";
 import axios from "axios";
 import type { AgentStreamEvent } from "@colormax/schema";
 import { detectSystemProxy } from "./proxy.ts";
-import { sunoApi, CaptchaRequiredError, DEFAULT_MODEL, type SunoFingerprint } from "../vendor/SunoApi.ts";
+import { sunoApi, CaptchaRequiredError, CaptchaTimeoutError, DEFAULT_MODEL, type SunoFingerprint } from "../vendor/SunoApi.ts";
 import { CookiePool } from "./pool.ts";
 import { decryptClipAudio } from "./decrypt.ts";
 
@@ -31,6 +31,8 @@ export interface SunoGatewayOptions {
   waitAudioMs?: number;
   fingerprint?: SunoFingerprint; // ⑯ 指纹档（默认 hybrid=上游行为；web=全 macOS Chrome 自洽档）
   userAgent?: string;            // 与 cookie 导出浏览器一致时传入（A/B 探针用）
+  captchaTtlMs?: number;         // ⑱ 人工验证等待上限（默认 10min；env SUNO_CAPTCHA_TTL_MS）
+  captchaPollMs?: number;        // ⑱ 等待期 c/check 轮询间隔（默认 5s；env SUNO_CAPTCHA_POLL_MS）
 }
 
 export interface SunoRenderRequest {
@@ -49,6 +51,14 @@ export interface SunoRenderResult {
 }
 
 const AUTH_ERROR_PATTERN = /(invalid|expired|cookie|unauthorized|401|429)/i;
+
+/** ⑱ 默认人工验证等待参数（可 options/env 覆盖） */
+export const CAPTCHA_WAIT_DEFAULTS = { ttlMs: 600_000, pollMs: 5_000 };
+const waitConf = (opts: SunoGatewayOptions) => ({
+  ttlMs: opts.captchaTtlMs ?? Number(process.env.SUNO_CAPTCHA_TTL_MS ?? CAPTCHA_WAIT_DEFAULTS.ttlMs),
+  pollMs: opts.captchaPollMs ?? Number(process.env.SUNO_CAPTCHA_POLL_MS ?? CAPTCHA_WAIT_DEFAULTS.pollMs),
+});
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export class SunoGatewayAdapter {
   private opts: SunoGatewayOptions;
@@ -91,6 +101,52 @@ export class SunoGatewayAdapter {
     throw lastErr ?? new SunoQuotaError("cookie 池耗尽");
   }
 
+  /**
+   * ⑱ 人工验证等待：闸门 required 时挂起轮询 c/check，用户在浏览器 suno.com/create 过一次验证
+   * 后放行即自动续跑；TTL（默认 10min）超时抛 CaptchaTimeoutError（子类=cookie 轮换沿用）。
+   * 期间 emit captcha_wait(waiting/passed/timeout) 帧供对话流渲染等待卡。
+   */
+  private async gateWait(
+    api: { captchaGate(): Promise<{ required: boolean; version?: number }> },
+    callId: string,
+    hooks: GatewayRenderHooks | undefined,
+    first: { required: boolean; version?: number },
+  ): Promise<void> {
+    const emit = (evt: AgentStreamEvent) => hooks?.emit?.(evt);
+    const { ttlMs, pollMs } = waitConf(this.opts);
+    const t0 = Date.now();
+    emit({
+      type: "captcha_wait", callId, phase: "waiting", elapsedMs: 0, ttlMs,
+      note: `Suno 要求人工验证（captcha_version=${first.version ?? "?"}）：请在浏览器 suno.com/create 完成一次验证，通过后自动续跑（上限 ${Math.round(ttlMs / 60000)} 分钟）`,
+    });
+    let last = t0;
+    for (;;) {
+      await sleep(pollMs);
+      const elapsedMs = Date.now() - t0;
+      let g: { required: boolean; version?: number };
+      try {
+        g = await api.captchaGate();
+      } catch (e) {
+        g = { required: true }; // 探测异常按仍需处理，下一轮重试
+        void e;
+      }
+      if (!g.required) {
+        emit({ type: "captcha_wait", callId, phase: "passed", elapsedMs, ttlMs, note: "验证通过，继续生成" });
+        return;
+      }
+      if (elapsedMs >= ttlMs) {
+        emit({ type: "captcha_wait", callId, phase: "timeout", elapsedMs, ttlMs, note: "等待人工验证超时" });
+        throw new CaptchaTimeoutError(
+          `Suno 风控闸门（CAPTCHA）人工验证等待超时（${Math.round(ttlMs / 60000)} 分钟未检测通过）：请在浏览器完成 suno.com/create 验证后发送「继续」，或轮换 SUNO_COOKIES`,
+        );
+      }
+      if (Date.now() - last >= 15_000) {
+        last = Date.now();
+        emit({ type: "captcha_wait", callId, phase: "waiting", elapsedMs, ttlMs, note: "仍待验证…" });
+      }
+    }
+  }
+
   private async tryRender(cookie: string, req: SunoRenderRequest, hooks?: GatewayRenderHooks): Promise<SunoRenderResult> {
     const callId = hooks?.callId ?? randomUUID();
     const emit = (evt: AgentStreamEvent) => hooks?.emit?.(evt);
@@ -113,10 +169,11 @@ export class SunoGatewayAdapter {
       fingerprint: this.opts.fingerprint,
       userAgent: this.opts.userAgent,
     });
-    // ⑰ 闸门预检：required=true → fail-fast CaptchaRequiredError（走 cookie 轮换/失败编排，不再撞 500）
-    const gate = await step("captchaGate", () => api.captchaGate(), (g) => (g.required ? `⚠ 需验证 captcha_version=${g.version ?? "?"}` : "放行"));
-    if (gate.required)
-      throw new CaptchaRequiredError(`Suno 风控闸门要求验证（captcha_version=${gate.version ?? "?"}）：请在浏览器 suno.com/create 人工过一次验证，或轮换 SUNO_COOKIES 后发送「继续」接续`);
+    // ⑱ 闸门预检+人工等待编排（R1 UX 2026-09-01）：required 不再 fail-fast 终结 job，
+    // 挂起轮询 c/check 直到用户在浏览器过一次验证（自动续跑）；TTL 超时抛 CaptchaTimeoutError
+    // → cookie 轮换；池耗尽 → 失败编排（state_saved 缓存 + 一次性 LLM 终报 + failed(captcha)）
+    const gate = await step("captchaGate", () => api.captchaGate(), (g) => (g.required ? `需验证（转人工等待）captcha_version=${g.version ?? "?"}` : "放行"));
+    if (gate.required) await this.gateWait(api, callId, hooks, gate);
     // 配额预检（get_limit 等价：/api/billing/info/）
     await step("quotaCheck", async () => {
       const c = (await api.get_credits()) as { credits_left: number };
@@ -130,21 +187,28 @@ export class SunoGatewayAdapter {
       req.lyrics.join("\n") +
       `\n\n[创作约束] 调性=${req.arrangement.key}，速度=${req.arrangement.bpm}bpm，节奏型=${req.arrangement.groove}，目标时长≈${req.durationSec}s`;
     // vendor onPoll（二次开发点⑮）→ suno_progress 帧：生成轮询实时回对话
-    const songs = await step(
-      "customGenerate",
-      () =>
-        api.custom_generate(prompt, tags, req.title, false, DEFAULT_MODEL, true, undefined, (infos, elapsedMs) => {
-          const done = infos.filter((a) => a.status === "complete" || a.status === "error").length;
-          emit({
-            type: "suno_progress", callId, stage: "poll", done, total: infos.length,
-            status: infos.every((a) => a.status === "complete") ? "complete"
-              : infos.some((a) => a.status === "error") ? "error" : "streaming",
-            elapsedMs,
-            note: infos.map((a) => `${a.id.slice(0, 8)}:${a.status}`).join(" "),
-          });
-        }),
-      (r) => `clips: ${r.map((a) => a.id.slice(0, 8)).join(",")}`,
-    );
+    const gen = () =>
+      api.custom_generate(prompt, tags, req.title, false, DEFAULT_MODEL, true, undefined, (infos, elapsedMs) => {
+        const done = infos.filter((a) => a.status === "complete" || a.status === "error").length;
+        emit({
+          type: "suno_progress", callId, stage: "poll", done, total: infos.length,
+          status: infos.every((a) => a.status === "complete") ? "complete"
+            : infos.some((a) => a.status === "error") ? "error" : "streaming",
+          elapsedMs,
+          note: infos.map((a) => `${a.id.slice(0, 8)}:${a.status}`).join(" "),
+        });
+      });
+    const genNote = (r: Awaited<ReturnType<typeof gen>>) => `clips: ${r.map((a) => a.id.slice(0, 8)).join(",")}`;
+    let songs: Awaited<ReturnType<typeof gen>>;
+    try {
+      songs = await step("customGenerate", gen, genNote);
+    } catch (e) {
+      // 生成中途触发验证码（token 被撤，上游 getCaptcha fail-fast）→ 转一次人工等待，放行后重投
+      if (!(e instanceof CaptchaRequiredError) || e instanceof CaptchaTimeoutError) throw e;
+      const g2 = await step("captchaGate", () => api.captchaGate(), () => "生成中途再触发验证");
+      if (g2.required) await this.gateWait(api, callId, hooks, g2);
+      songs = await step("customGenerate", gen, genNote);
+    }
     const [primary] = songs;
     if (!primary) throw new Error("Suno 未返回作品");
 

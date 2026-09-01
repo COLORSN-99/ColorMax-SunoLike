@@ -68,7 +68,7 @@ Job          { id; sessionId; phase: 'intent'|'plan'|'dispatch'|'suno'|'align'|'
 | `GET /api/songs/:jobId/download` | 下载 Suno 源格式音频 |
 
 内部 Suno 接入（2026-08-30 用户拍板：**vendor gcui-art/suno-api 源码本地二次开发**，非远程 HTTP 调独立服务）：
-`packages/suno-gateway`：vendor `SunoApi.ts`/`utils.ts`（LGPL-3.0 保留许可+修改声明），二次开发点 = ①移除浏览器/CAPTCHA 重依赖（rebrowser/2captcha/ghost-cursor）→ fail-fast `CaptchaRequiredError`（CookiePool 轮换/人工）②HTTP transport 可注入（测试/代理）③常量 UA ④logger 控制台化 ⑤wait_audio 轮询上限可配（默认 5min）⑥cookie 会话池（轮换+失效剔除，≥2 次失败剔出）⑮轮询进度回调 `onPoll`（→ suno_progress 帧实时回对话；仅签名扩展，不引入项目依赖）。
+`packages/suno-gateway`：vendor `SunoApi.ts`/`utils.ts`（LGPL-3.0 保留许可+修改声明），二次开发点 = ①移除浏览器/CAPTCHA 重依赖（rebrowser/2captcha/ghost-cursor）→ fail-fast `CaptchaRequiredError`（CookiePool 轮换/人工）②HTTP transport 可注入（测试/代理）③常量 UA ④logger 控制台化 ⑤wait_audio 轮询上限可配（默认 5min）⑥cookie 会话池（轮换+失效剔除，≥2 次失败剔出）⑮轮询进度回调 `onPoll`（→ suno_progress 帧实时回对话；仅签名扩展，不引入项目依赖）⑯指纹档 `buildSunoHeaders(hybrid|web)` 拦截器统一注入⑰`captchaGate()` 公开闸门预检⑱`CaptchaTimeoutError`（子类，轮换/分类链路自动继承）。adapter 侧 `gateWait`（⑱）：required → 挂起轮询 c/check（默认 5s）直到放行（自动续跑，无需用户回复）或 TTL（默认 10min，`SUNO_CAPTCHA_TTL_MS/SUNO_CAPTCHA_POLL_MS`）超时抛出；期间 `captcha_wait` waiting/passed/timeout 帧 → JobStore 翻 job.status pending↔running（SSE 不关闭，刷新可重连接续看等待卡）；超时后走 §8 失败编排（state_saved→一次性 LLM 终报→failed(causeKind=captcha, failPhase=suno)→「继续」resume）。
 `SunoGatewayAdapter.render` = 配额预检（`/api/billing/info/` get_credits）→ `custom_generate`（lyrics+创作约束 prompt，tags=风格/调性/节奏型+和弦走向，**strict-complete** 轮询——原版把 streaming 当完成是缺陷）→ feed 对齐 `complete` → **`/api/clip/{id}` 详情取 media_urls 真实源链（feed 的 audio_url=api/forbidden 旧占位）** → **AudioDelivery=server-decrypt-transcode**（2026-08-30 逆向后定版）：下载密文（`media_urls` 直链，feed 的 audio_url=api/forbidden 是旧占位）→ **DRM 解密（逆向自 suno.com bundle：`userKey=SHA-256(JWT)` AES-GCM → `POST /api/mango/rights`(Bearer JWT) → key/iv 以 contentId 为 additionalData GCM unwrap → AES-CTR 单次整批解密）** → **ffmpeg 转码 MP3 缓存 + 同源 Range 播放**（`/api/songs/:id/audio`：缓存未命中**请求内同步转码**直出 audio/mpeg——2026-08-30 修复：旧"首帧直出 mp4/Opus+后台转码"策略下未缓存曲目 Chrome 0:00 不可播且 UI 不重试；仅 ffmpeg 失败回退 mp4 直出）——全浏览器兼容。
 
 ## 5. LLM 设置面板（无 mock 契约）
@@ -289,11 +289,11 @@ Stage 1 ──► Stage 2 ──► Stage 3 ──► Stage 6（6.1 流式可观
 ## 12. 风险
 
 - suno 反爬/风控（hCaptcha）：生成端 token/验证链路为最大不确定项——**专项调研见 §14（任务书）**；短期=浏览器预热+冷却+CookiePool 轮换；接口变动时 adapter 隔离修复。
-- LGPL-3.0：vendor 源码本地二次开发（非独立服务进程，2026-08-30 拍板），修改点以「二次开发点①~⑮」注释划界，LICENSE 文件随附。
+- LGPL-3.0：vendor 源码本地二次开发（非独立服务进程，2026-08-30 拍板），修改点以「二次开发点①~⑱」注释划界，LICENSE 文件随附。
 - LLM 依赖：演示需可用 OpenAI/Anthropic 兼容端点；输出契约破损面已有三级兜底（预修复/repairPlan/自纠错回喂）。
 - 流式链路：端点不支持 SSE 自动降级一次性（已测）；高频帧 localStorage 写入已节流。
 
-## 13. 状态对账（2026-08-31）
+## 13. 状态对账（2026-09-01）
 
 | Stage | 内容 | 状态 | 缺口 |
 |---|---|---|---|
@@ -303,6 +303,7 @@ Stage 1 ──► Stage 2 ──► Stage 3 ──► Stage 6（6.1 流式可观
 | Stage 4 产品壳（P1） | 作品看板✅/失败引导✅（升 6.2）/持久化✅（升 4.1） | ⚠ 部分 | Mock 开关 UI ❌；README 10 分钟启动 ❌；Playwright 基测 ❌ |
 | Stage 4.1 会话持久化 | localStorage（ADR-001）：sessions/msgs/三分支恢复/看板快照/resume 冗余 | ✅ 完成（S4-T1~T3 + SM-4） | 跨进程接续不做（拍板） |
 | Stage 6 流式可观测+失败恢复 | 事件契约/llm 流式双通道/Suno 进度/segment UI/评审编排/resume/意图路由/give-up | ✅ 完成（S6-T1~T13 + SM-1/4/5） | 真实 Suno 链路「失败→接续→交付」终验随冷却复跑 |
+| R1-A 风控缓解（⑯⑰⑱） | 指纹档 hybrid/web + 拦截器注入（修架空 bug）+ captchaGate 预检 + **人工验证 pending 编排**（挂起轮询 10min TTL→自动续跑/超时终报）| ✅ 完成（G7-1~4 + S6-T14；A/B 实测探针 captcha_version 随画像变 v1/v2）| 默认档定档需账号干净态复测；「过验证→自动续跑」端到端待真实验证窗口 |
 | Stage 5 M4+（P2） | Stem/Studio/批量/工作流共享/插件化/Electron/资产库 | 不实现（PRD「不做」节） | —（路线预留） |
 
 **定版说明**：AudioDelivery 三阶段——suno-session（绕开）→ server-decrypt（解密失败表象）→ **server-decrypt-transcode**（最终：解密+转码双层缓存，解决 mp4/Opus 浏览器容器差异；08-30 追加：缓存未命中请求内同步转码，消灭首帧不可播窗口）。

@@ -11,6 +11,8 @@ interface MockCtx {
   captcha: boolean;
   feedStatus: string;
   calls: { url: string; method: string }[];
+  /** ⑱ 人工等待模拟：前 N 次 c/check 返回 required=true，之后放行 */
+  gatePassAfter?: number;
 }
 
 /** 最小 AxiosInstance 替身（拦截器 stub） */
@@ -42,7 +44,14 @@ function stubTransport(ctx: MockCtx): AxiosInstance {
         return async (url: string) => {
           const u = String(url);
           ctx.calls.push({ url: u, method: String(prop) });
-          if (u.includes("/api/c/check")) return { data: { required: ctx.captcha }, status: 200, headers: {} };
+          if (u.includes("/api/c/check")) {
+            let required = ctx.captcha;
+            if (typeof ctx.gatePassAfter === "number") {
+              const checks = ctx.calls.filter((c) => c.url.includes("/api/c/check")).length;
+              required = checks <= ctx.gatePassAfter; // 第 N+1 次起放行
+            }
+            return { data: { required, captcha_version: 2 }, status: 200, headers: {} };
+          }
           if (u.includes("/api/billing/info/")) return { data: { total_credits_left: ctx.credits, period: "m", monthly_limit: 100, monthly_usage: 10 }, status: 200, headers: {} };
           if (u.includes("/api/mango/rights")) return { data: RIGHTS_FIXTURE, status: 200, headers: {} };
           if (u.includes("/api/generate/v2/")) return { data: { clips: [{ id: "c1", title: "t", audio_url: "", status: "queued", metadata: {} }] }, status: 200, headers: {} };
@@ -221,18 +230,52 @@ test("G7-2 chromeMajor 版本派生", () => {
   assert.equal(chromeMajor("no chrome here"), "130"); // 兜底
 });
 
-test("G7-3 ⑰ 闸门预检：c/check required=true → 生成前 CaptchaRequiredError（不撞 500/不进 generate）", async () => {
+test("G7-3 ⑱ 闸门人工等待·超时路径：持续 required → 轮询至 TTL 抛 CaptchaTimeoutError（不进 generate；captcha_wait waiting/timeout 帧）", async () => {
   const ctx: MockCtx = { credits: 10, captcha: true, feedStatus: "complete", calls: [] };
+  const events: Array<Record<string, unknown>> = [];
   const adapter = new SunoGatewayAdapter({
     cookies: ["__client=xx; ajs_anonymous_id=g7"],
     publicDir: mkdtempSync(join(tmpdir(), "g7-")),
     transport: stubTransport(ctx),
     waitAudioMs: 500,
+    captchaTtlMs: 150,
+    captchaPollMs: 50,
   });
-  await assert.rejects(adapter.render(REQ), (e: unknown) => {
-    assert.ok(e instanceof CaptchaRequiredError, "闸门 fail-fast 抛 CaptchaRequiredError");
-    assert.ok(ctx.calls.some((c) => c.url.includes("/api/c/check")), "预检确实打了 c/check");
-    assert.ok(!ctx.calls.some((c) => c.url.includes("/api/generate/v2/")), "required=true 时不进入 generate");
-    return true;
+  await assert.rejects(
+    adapter.render(REQ, { callId: "s7", emit: (e) => events.push(e as never) }),
+    (e: unknown) => {
+      assert.ok(e instanceof CaptchaRequiredError, "超时错误可作 CaptchaRequiredError 捕获（子类）");
+      assert.equal((e as Error).name, "CaptchaTimeoutError");
+      assert.ok(/CAPTCHA/.test((e as Error).message), "消息含 CAPTCHA 关键词（评审降级分类可命中）");
+      return true;
+    },
+  );
+  assert.ok(ctx.calls.some((c) => c.url.includes("/api/c/check")), "打过 c/check");
+  assert.ok(ctx.calls.filter((c) => c.url.includes("/api/c/check")).length >= 2, "至少预检+一次轮询");
+  assert.ok(!ctx.calls.some((c) => c.url.includes("/api/generate/v2/")), "required 期间不进 generate");
+  const waits = events.filter((e) => e.type === "captcha_wait");
+  assert.ok(waits.some((e) => e.phase === "waiting"), "waiting 帧已发射");
+  assert.ok(waits.some((e) => e.phase === "timeout"), "timeout 帧已发射");
+  assert.equal(waits[0].ttlMs, 150);
+});
+
+test("G7-3b ⑱ 闸门人工等待·放行路径：轮询到第 2 次验证通过 → passed 帧 + 自动续跑完整 render 交付", async () => {
+  const ctx: MockCtx = { credits: 10, captcha: true, feedStatus: "complete", calls: [], gatePassAfter: 1 }; // 预检 true，第一次轮询放行
+  const events: Array<Record<string, unknown>> = [];
+  const dir = mkdtempSync(join(tmpdir(), "g7b-"));
+  const adapter = new SunoGatewayAdapter({
+    cookies: ["__client=xx; ajs_anonymous_id=g7b"],
+    publicDir: join(dir, "generated"),
+    transport: stubTransport(ctx),
+    waitAudioMs: 800,
+    captchaTtlMs: 5_000,
+    captchaPollMs: 60,
   });
+  const res = await adapter.render(REQ, { callId: "s7b", emit: (e) => events.push(e as never) });
+  assert.ok(res.audioUrl.startsWith("/generated/"), "放行后自动完成出歌");
+  const waits = events.filter((e) => e.type === "captcha_wait");
+  assert.ok(waits.some((e) => e.phase === "passed"), "passed 帧");
+  assert.ok(!waits.some((e) => e.phase === "timeout"), "未超时不应有 timeout 帧");
+  assert.ok(ctx.calls.some((c) => c.url.includes("/api/generate/v2/")), "放行后进入 generate");
+  rmSync(dir, { recursive: true, force: true });
 });

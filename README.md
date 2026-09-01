@@ -25,8 +25,9 @@ pnpm --filter @colormax/web start
 #    未配置 SUNO_COOKIES 时自动用 Mock 引擎（开发调试链路，验收请配真实会话）
 ```
 
-测试：逐包 `node --test test/*.test.ts`（packages/*、apps/web）；当前全仓 46 用例。
+测试：逐包 `node --test test/*.test.ts`（packages/*、apps/web）；当前全仓 51 用例。
 要求：`ffmpeg` 在 `/opt/homebrew/bin/ffmpeg`（Linux 改 `packages/suno-gateway/src` 音频中继路径常量）。
+风控（R1-A，见 docs/risk-control-research.md）：可选 `SUNO_FINGERPRINT=hybrid|web`（指纹档）、`SUNO_UA`、`SUNO_CAPTCHA_TTL_MS`（人工验证等待上限，默认 10min）、`SUNO_CAPTCHA_POLL_MS`。生成遇 CAPTCHA 时任务挂起 `pending` + 对话渲染等待卡（打开 suno.com/create 验证），**通过即自动续跑**，无需回复。
 
 ## 当前能力（MVP Demo，Stage 1-3 + 4.1 + 6 已交付）
 

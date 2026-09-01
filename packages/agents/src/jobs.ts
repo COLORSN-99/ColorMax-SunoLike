@@ -155,6 +155,11 @@ export class JobStore {
       this.emit(jobId, roundId, { type: "phase", phase, payload });
     };
     const onEvent = (evt: AgentStreamEvent) => {
+      // ⑱ 人工验证等待：waiting → job 挂 pending（对话流显等待卡+轮询）；passed/timeout → 回 running
+      if (evt.type === "captcha_wait") {
+        if (evt.phase === "waiting") patch({ status: "pending" });
+        else patch({ status: "running" });
+      }
       this.emit(jobId, roundId, evt);
     };
     // 快照累积：每节点产出后更新（供失败接续）

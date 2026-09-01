@@ -34,6 +34,15 @@ export type Segment =
       elapsedMs: number;
       note?: string;
     }
+  | {
+      /** ⑱ 人工验证等待卡：waiting 显倒计时与操作指引；passed 保留作历史；timeout 由 error 卡接管（段移除） */
+      kind: "wait";
+      callId: string;
+      state: "waiting" | "passed";
+      elapsedMs: number;
+      ttlMs: number;
+      note?: string;
+    }
   | { kind: "plan"; plan: Record<string, unknown> }
   | { kind: "judge"; report: unknown }
   | { kind: "result"; song: { title: string; audioUrl: string; durationSec: number; sourceFormat: string }; jobId?: string }
@@ -74,6 +83,7 @@ export interface Msg {
   level?: string;
   message?: string;
   stage?: string;
+  ttlMs?: number;
   done?: number;
   total?: number;
   status?: string;
@@ -158,6 +168,18 @@ export function applyEvent(segs: Segment[], e: Evt): Segment[] {
       };
       return i >= 0 ? segs.map((s, j) => (j === i ? next : s)) : [...segs, next];
     }
+    case "captcha_wait": {
+      const callId = e.callId ?? "x";
+      const state = e.phase === "passed" ? "passed" : e.phase === "timeout" ? "timeout" : "waiting";
+      if (state === "timeout")
+        return segs.filter((s) => !(s.kind === "wait" && s.callId === callId)); // 超时：error 卡接管（failed 帧紧随其后）
+      const i = segs.findIndex((s) => s.kind === "wait" && s.callId === callId);
+      const next: Segment = {
+        kind: "wait", callId, state,
+        elapsedMs: e.elapsedMs ?? 0, ttlMs: e.ttlMs ?? 600_000, note: e.note,
+      };
+      return i >= 0 ? segs.map((s, j) => (j === i ? next : s)) : [...segs, next];
+    }
     case "phase": {
       const out = [...segs];
       const ph = e.phase ?? "";
@@ -204,7 +226,7 @@ export function applyEvent(segs: Segment[], e: Evt): Segment[] {
     }
     case "failed": {
       const roundId = e.roundId ?? "x";
-      const cleared = segs.filter((s) => s.kind !== "thinking" && s.kind !== "terminal" && s.kind !== "suno");
+      const cleared = segs.filter((s) => s.kind !== "thinking" && s.kind !== "terminal" && s.kind !== "suno" && s.kind !== "wait");
       const ei = cleared.findIndex((s) => s.kind === "error");
       if (ei >= 0) {
         const cur = cleared[ei];

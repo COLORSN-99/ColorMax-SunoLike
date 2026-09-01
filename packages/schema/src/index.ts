@@ -124,6 +124,17 @@ export interface SunoProgressEvent {
   note?: string;
 }
 
+/** 人工验证等待帧（R1 UX 2026-09-01）：闸门 required 后 job 不终结，挂起轮询 c/check，
+ *  用户在浏览器过一次验证自动放行续跑；TTL（默认 10min）超时才走失败终报 */
+export interface CaptchaWaitEvent {
+  type: "captcha_wait";
+  callId: string;
+  phase: "waiting" | "passed" | "timeout";
+  elapsedMs: number;
+  ttlMs: number;
+  note?: string;
+}
+
 /** 失败快照就绪（Stage 6.2 接续底座）：phase=失败落点 */
 export interface StateSavedEvent {
   type: "state_saved";
@@ -154,7 +165,7 @@ export interface ErrorReviewEvent {
   steps: string[];
 }
 
-export type AgentStreamEvent = LlmThinkingEvent | ToolCallEvent | SunoProgressEvent |
+export type AgentStreamEvent = LlmThinkingEvent | ToolCallEvent | SunoProgressEvent | CaptchaWaitEvent |
   StateSavedEvent | ResumeAppliedEvent | ErrorReviewDeltaEvent | ErrorReviewEvent;
 
 /** Stage 6.1：渲染/引擎细粒度事件透传（engine 与 suno-gateway 共享，避免反向依赖） */
@@ -168,7 +179,7 @@ export const JobSchema = z.object({
   id: z.string(),
   sessionId: z.string(),
   phase: z.enum(JOB_PHASES),
-  status: z.enum(["queued", "running", "done", "failed"]),
+  status: z.enum(["queued", "running", "pending", "done", "failed"]),
   payload: z.unknown().optional(),
   report: JudgeReportSchema.nullable().optional(),
   result: AlignedSongSchema.nullable().optional(),

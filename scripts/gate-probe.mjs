@@ -40,6 +40,24 @@ async function probe(fingerprint) {
 }
 
 console.log(`探针开始：hybrid/web ×${rounds}，代理=${proxy ? `${proxy.host}:${proxy.port}` : "无"}`);
+
+// ⑱ --wait 人工等待模式：持续轮询直到闸门放行（上限 10min）——配合浏览器过验证实测续跑
+if (process.argv.includes("--wait")) {
+  const api = await sunoApi(cookies, { transport: axios.create({ timeout: 15_000, ...(proxy ? { proxy: { host: proxy.host, port: proxy.port, protocol: "http" } } : {}) }) });
+  const t0 = Date.now();
+  const TTL = 600_000;
+  console.log("等待人工验证（浏览器完成 suno.com/create 一次验证即自动放行）…");
+  for (;;) {
+    const g = await api.captchaGate();
+    const el = Math.round((Date.now() - t0) / 1000);
+    console.log(`+${el}s required=${g.required} v=${g.version ?? "?"}`);
+    if (!g.required) { console.log("✓ 闸门放行——创作室发一条生成请求即可续跑"); break; }
+    if (Date.now() - t0 > TTL) { console.log("✗ 10min 超时仍 required"); process.exit(2); }
+    await sleep(5000);
+  }
+  process.exit(0);
+}
+
 const results = [];
 for (let i = 0; i < rounds; i++) {
   for (const fp of ["hybrid", "web"]) {

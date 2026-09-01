@@ -50,6 +50,8 @@
 > ③ 顺带排除：同日一次 intent 阶段 `causeKind=schema` 失败为 DeepSeek 偶发输出不合契约（同提示词二次跑即合法 JSON），与指纹/闸门无关。
 > ④ **当前状态**：账号处于"要求验证"冷却——唯一可行动路径 = 浏览器 suno.com/create 人工过一次验证，随后向对话发「继续」（resume 从 suno 落点重跑，闸门大概率转放行）；若仍 required，则把 verify 后的会话 cookie 导出替换 `.env.local`。此路径即演示前必备的手动预热动作。
 
+> **⑤ pending 编排升级（2026-09-01，用户拍板）**：「失败→人工回复继续」改为**挂起等待**——闸门 required 时 job 转 `pending`（对话流渲染等待卡：打开 suno.com/create 按钮+秒级倒计时+剩余 TTL），adapter 每 5s 轮询 c/check，**用户过验证即自动续跑（无需任何回复）**；TTL 10min（`SUNO_CAPTCHA_TTL_MS` 可调）超时才断开 pending 并一次性交付评审 LLM → 结构化终报给用户 → 停止运行；缓存/接续沿用 state_saved 不变。实现=⑱（adapter gateWait + captcha_wait 事件帧 + JobStore pending 态翻转 + 前端 WaitCard），G7-3/G7-3b 覆盖超时/放行两路径；探针新增 `--wait` 人工等待模式配合过验证现场验证。
+
 ## 3. 线三：替代生成通道（逐项核实存在性，2026-08-31）
 
 | 通道 | 存在性 | 形态/价格 | 关键事实 | 评级 |

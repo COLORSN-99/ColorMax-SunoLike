@@ -73,3 +73,20 @@ test("S6-T8 SSE 帧解析：多帧/跨读残帧/id 行/多行 data 合并", () =
   assert.equal(frames[1].data, '{"delta":"a"}\n{"more\nb}');
   assert.equal(rest, "partial-no-blankline");
 });
+
+test("S6-T14 ⑱ captcha_wait 三分支：waiting 建卡/passed 原位收敛/timeout 移除待 failed 接管；failed 清 wait 段", () => {
+  let segs: Segment[] = [{ kind: "thinking", callId: "c", node: "suno", content: "", reasoning: "", streaming: false }];
+  segs = applyEvent(segs, { type: "captcha_wait", callId: "w1", phase: "waiting", elapsedMs: 0, ttlMs: 600000, note: "请完成验证" });
+  const w = segs.find((s) => s.kind === "wait");
+  assert.ok(w?.kind === "wait" && w.state === "waiting" && w.ttlMs === 600000);
+  segs = applyEvent(segs, { type: "captcha_wait", callId: "w1", phase: "waiting", elapsedMs: 5000, ttlMs: 600000 });
+  assert.equal(segs.filter((s) => s.kind === "wait").length, 1, "同 callId 原位更新不建重卡");
+  assert.ok((segs.find((s) => s.kind === "wait") as { elapsedMs: number }).elapsedMs === 5000);
+  segs = applyEvent(segs, { type: "captcha_wait", callId: "w1", phase: "passed", elapsedMs: 9000, ttlMs: 600000 });
+  assert.ok((segs.find((s) => s.kind === "wait")?.kind === "wait") && (segs.find((s) => s.kind === "wait") as { state: string }).state === "passed");
+  segs = applyEvent(segs, { type: "captcha_wait", callId: "w1", phase: "timeout", elapsedMs: 600000, ttlMs: 600000 });
+  assert.equal(segs.find((s) => s.kind === "wait"), undefined, "timeout 撤等待卡，等 failed 的 error 卡接管");
+  // failed 时残留 wait 段一并清除
+  let s2 = applyEvent([{ kind: "text", text: "t" }, { kind: "wait", callId: "w2", state: "waiting" as const, elapsedMs: 1, ttlMs: 2 }], { type: "failed", error: "x", roundId: "r" });
+  assert.equal(s2.find((s) => s.kind === "wait"), undefined, "failed 清 wait 段");
+});

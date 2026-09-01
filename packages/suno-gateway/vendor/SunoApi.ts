@@ -758,3 +758,11 @@ export class CaptchaRequiredError extends Error {
     this.name = 'CaptchaRequiredError';
   }
 }
+
+/** 人工验证等待超时（R1 UX）：子类化 CaptchaRequiredError → cookie 轮换/评审分类(/CAPTCHA/)链路自动继承 */
+export class CaptchaTimeoutError extends CaptchaRequiredError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'CaptchaTimeoutError';
+  }
+}

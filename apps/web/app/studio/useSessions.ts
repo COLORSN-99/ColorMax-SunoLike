@@ -31,7 +31,7 @@ async function probeJob(id: string): Promise<"terminal" | "running" | "gone"> {
     const r = await fetch(`/api/jobs/${id}`);
     if (!r.ok) return "gone";
     const j = (await r.json()) as { status: string };
-    return j.status === "running" || j.status === "queued" ? "running" : "terminal";
+    return j.status === "running" || j.status === "queued" || j.status === "pending" ? "running" : "terminal";
   } catch {
     return "gone";
   }

@@ -237,6 +237,42 @@ export function ResultBlock({ seg, onOpenBoard }: { seg: Extract<Segment, { kind
   );
 }
 
+export function WaitCard({ seg }: { seg: Extract<Segment, { kind: "wait" }> }) {
+  const [now, setNow] = useState(() => Date.now());
+  const seenRef = useRef({ key: "", at: 0 });
+  if (seg.state === "waiting" && seenRef.current.key !== `${seg.elapsedMs}`) {
+    seenRef.current = { key: `${seg.elapsedMs}`, at: Date.now() };
+  }
+  useEffect(() => {
+    if (seg.state !== "waiting") return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [seg.state]);
+  const liveElapsed = seg.state === "waiting" ? seg.elapsedMs + Math.max(0, now - seenRef.current.at) : seg.elapsedMs;
+  const remainMin = Math.ceil(Math.max(0, seg.ttlMs - liveElapsed) / 60000);
+  if (seg.state === "passed")
+    return (
+      <div style={{ margin: "6px 0", padding: "8px 10px", background: "#12180f", border: "1px solid #2a3a24", borderRadius: 6, fontSize: 12, color: "#73d13d" }}>
+        ✓ 人工验证通过，任务已自动续跑 {seg.note ? <span style={{ color: "#557a44" }}>· {seg.note}</span> : ""}
+      </div>
+    );
+  const pct = Math.min(100, Math.round((liveElapsed / seg.ttlMs) * 100));
+  return (
+    <div style={{ margin: "6px 0", padding: "10px", background: "#17140f", border: "1px solid #3a3324", borderRadius: 6 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12, flexWrap: "wrap" }}>
+        <span style={{ color: "#e8b86a" }}>🕗 等待人工验证（hCaptcha）</span>
+        <a href="https://suno.com/create" target="_blank" rel="noreferrer" style={{ color: "#6a6acd" }}>打开 suno.com/create 完成验证 ↗</a>
+        <span style={{ color: "#7c7c85" }}>验证通过后自动续跑，无需回复</span>
+      </div>
+      <div style={{ fontSize: 11, color: "#9a9aa0", margin: "6px 0 4px" }}>{seg.note ?? "Suno 要求完成一次人机验证"}</div>
+      <Progress percent={pct} size="small" showInfo={false} strokeColor="#e8b86a" style={{ margin: 0 }} />
+      <div style={{ fontSize: 11, color: "#7c7c85", marginTop: 4 }}>
+        等待上限剩 {remainMin} 分钟 · 已等 {Math.round(liveElapsed / 1000)}s（超时后本轮终止；验证完成后回复「继续」仍可从落点接续）
+      </div>
+    </div>
+  );
+}
+
 export function SegmentView({ seg, onOpenBoard }: { seg: Segment; onOpenBoard: () => void }) {
   switch (seg.kind) {
     case "text":
@@ -247,6 +283,8 @@ export function SegmentView({ seg, onOpenBoard }: { seg: Segment; onOpenBoard: (
       return <TerminalBlock seg={seg} />;
     case "suno":
       return <SunoProgressBlock seg={seg} />;
+    case "wait":
+      return <WaitCard seg={seg} />;
     case "plan":
       return <PlanCard plan={seg.plan} />;
     case "judge":
