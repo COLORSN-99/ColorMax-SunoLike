@@ -44,6 +44,12 @@
 
 > **实施记录（2026-08-31，A 组落地）**：⑯ 指纹档 `hybrid|web`（buildSunoHeaders 两档全自洽；`web`=全 macOS Chrome 头族；顺带修复"注入 transport 时上游头族整体失效"的隐藏缺陷——现经拦截器统一注入，读侧四路由收口 `lib/env.ts`）+ ⑰ captchaGate 生成前预检 fail-fast（required=true 直接进失败编排，不再撞 500），G7×3 契约测试。**用户决定：不接中间商（B 组废弃）**。首轮 A/B 探针（scripts/gate-probe.mjs）因系统代理关闭、直连遇 DNS 污染全灭（网络层，非风控信号）——待代理在线复跑后择优定默认档。
 
+> **实测记录（2026-09-01，代理在线，真实 cookie）**：
+> ① **探针**：hybrid/web ×3 均**认证通过 3/3**（clerk 认证链对两档头族无差异），但**闸门均为 required=true**；**新发现：`captcha_version` 随指纹档不同（hybrid→v1 / web→v2）**——同一账号按请求指纹命中的验证版本不同，风控策略确有按画像分支。样本仅 1 组，**默认档维持 hybrid**（实证过出歌 + 零回归），web 档等过验证后复测再评。
+> ② **端到端 job**：生成任务走到 `suno` 阶段被闸门 fail-fast——`failed(phase=suno, causeKind=captcha)`，事件链 state_saved→error_review→failed 正常，错误文案可操作（"过验证/轮换 cookie 后发「继续」"），**未发起 generate、无 500**（⑰ 契约测试在真实链路的确认）。
+> ③ 顺带排除：同日一次 intent 阶段 `causeKind=schema` 失败为 DeepSeek 偶发输出不合契约（同提示词二次跑即合法 JSON），与指纹/闸门无关。
+> ④ **当前状态**：账号处于"要求验证"冷却——唯一可行动路径 = 浏览器 suno.com/create 人工过一次验证，随后向对话发「继续」（resume 从 suno 落点重跑，闸门大概率转放行）；若仍 required，则把 verify 后的会话 cookie 导出替换 `.env.local`。此路径即演示前必备的手动预热动作。
+
 ## 3. 线三：替代生成通道（逐项核实存在性，2026-08-31）
 
 | 通道 | 存在性 | 形态/价格 | 关键事实 | 评级 |
