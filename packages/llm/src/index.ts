@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import { parseRegistry, registrySettings, writeRegistry } from "./profiles.ts";
 import { createHash } from "node:crypto";
 import JSON5 from "json5";
 
@@ -30,6 +31,7 @@ export const DEFAULT_SETTINGS: LlmSettings = {
 };
 
 export * from "./providers.ts";
+export * from "./profiles.ts";
 
 export const SETTINGS_FILE = ".env.local";
 
@@ -44,45 +46,21 @@ function parseEnvFile(path: string): Record<string, string> {
 }
 
 export function readSettings(envPath = SETTINGS_FILE): LlmSettings {
-  const env = parseEnvFile(envPath);
-  return {
-    provider: env.LLM_PROVIDER || DEFAULT_SETTINGS.provider,
-    baseURL: env.LLM_BASE_URL || DEFAULT_SETTINGS.baseURL,
-    apiKey: env.LLM_API_KEY || "",
-    model: env.LLM_MODEL || DEFAULT_SETTINGS.model,
-    apiFormat: env.LLM_API_FORMAT === "anthropic" ? "anthropic" : "openai",
-    temperature: Number(env.LLM_TEMPERATURE ?? DEFAULT_SETTINGS.temperature),
-    maxTokens: Number(env.LLM_MAX_TOKENS ?? DEFAULT_SETTINGS.maxTokens),
-    thinking: env.LLM_THINKING === "1",
-  };
+  return registrySettings(parseRegistry(parseEnvFile(envPath)));
 }
 
-/** 设置写入 .env.local（增量合并：只更新 LLM_* 键，保留其他行（如 SUNO_COOKIES）——防覆盖用户配置） */
+/** 兼容旧调用：写入当前 active profile（新实现会同时写 LLM_PROFILES_JSON 与 LLM_* active 镜像）。 */
 export function writeSettings(settings: LlmSettings, envPath = SETTINGS_FILE): void {
-  const updates: Record<string, string> = {
-    LLM_PROVIDER: settings.provider,
-    LLM_BASE_URL: settings.baseURL,
-    LLM_API_KEY: settings.apiKey,
-    LLM_MODEL: settings.model,
-    LLM_API_FORMAT: settings.apiFormat,
-    LLM_TEMPERATURE: String(settings.temperature),
-    LLM_MAX_TOKENS: String(settings.maxTokens),
-    LLM_THINKING: settings.thinking ? "1" : "0",
+  const current = parseRegistry(parseEnvFile(envPath));
+  const active = current.profiles[current.activeId];
+  const next = {
+    ...current,
+    profiles: {
+      ...current.profiles,
+      [current.activeId]: { ...active, ...settings },
+    },
   };
-  const existing = existsSync(envPath) ? readFileSync(envPath, "utf-8").split("\n") : [];
-  const seen = new Set<string>();
-  const out = existing.map((line) => {
-    const m = line.match(/^\s*([A-Z_0-9]+)=/);
-    if (m && updates[m[1]] !== undefined) {
-      seen.add(m[1]);
-      return `${m[1]}=${updates[m[1]]}`;
-    }
-    return line;
-  });
-  for (const [k, v] of Object.entries(updates)) {
-    if (!seen.has(k)) out.push(`${k}=${v}`);
-  }
-  writeFileSync(envPath, out.join("\n"), "utf-8");
+  writeRegistry(next, envPath);
 }
 
 /** 校验设置可用性（非空+可解析） */

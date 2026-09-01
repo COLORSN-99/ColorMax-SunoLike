@@ -29,6 +29,8 @@ pnpm --filter @colormax/web start
 要求：`ffmpeg` 在 `/opt/homebrew/bin/ffmpeg`（Linux 改 `packages/suno-gateway/src` 音频中继路径常量）。
 风控（R1-A，见 docs/risk-control-research.md）：可选 `SUNO_FINGERPRINT=hybrid|web`（指纹档）、`SUNO_UA`、`SUNO_CAPTCHA_TTL_MS`（人工验证等待上限，默认 10min）、`SUNO_CAPTCHA_POLL_MS`。生成遇 CAPTCHA 时任务挂起 `pending` + 对话渲染等待卡（打开 suno.com/create 验证），**通过即自动续跑**，无需回复。
 
+LLM Key：设置页把每个服务商的配置和 Key 独立保存在本机 `apps/web/.env.local` 的 `LLM_PROFILES_JSON`（预置服务商按 ID；自定义按规范化 BaseURL 分桶），并维护当前激活档案的 `LLM_*` 镜像供新 LangGraph 任务读取。浏览器只会收到 `hasApiKey` 与 `sk-…末四位` 脱敏摘要，**不会从设置 API 获取 raw Key**；切换服务商时有历史 Key 自动注入服务端调用，无记录则留空填写。
+
 ## 当前能力（MVP Demo，Stage 1-3 + 4.1 + 6 已交付）
 
 - **多 Agent 编排**（LangGraph）：意图分析 → 创作规划 → 派发 suno-subagent → 统一建模对齐 → LLM 评判+规则检测 → 重派（≤3）→ 交付；全程真实 LLM 无 mock 分支。

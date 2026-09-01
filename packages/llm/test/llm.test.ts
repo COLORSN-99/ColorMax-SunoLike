@@ -14,6 +14,12 @@ import {
   testConnection,
   parseJsonLoose,
   DEFAULT_SETTINGS,
+  parseRegistry,
+  profileIdFor,
+  toSettingsView,
+  updateRegistry,
+  writeRegistry,
+  normalizeBaseURL,
 } from "../src/index.ts";
 
 test("S1-T1 配置写入与读取（面板→.env.local→client）", () => {
@@ -271,4 +277,45 @@ test("S1-T6 服务商目录：chatUrl 拼接各家版本前缀正确 + 结构完
     assert.ok(p.defaultModel === "" || p.models.some((m) => m.id === p.defaultModel), p.id + " defaultModel 在 models 内");
     assert.ok(p.consoleUrl && p.docsUrl, p.id + " 有取key/文档链接");
   }
+});
+
+test("S1-T7 服务商档案 registry：旧 LLM_* 迁移、独立 Key 历史、切回 active、脱敏 DTO 不泄漏原文", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cm-profiles-"));
+  const path = join(dir, ".env.local");
+  const deepKey = "sk-deepseek-secret-1234";
+  const openKey = "sk-openai-secret-5678";
+  try {
+    writeFileSync(path, `LLM_PROVIDER=DeepSeek\nLLM_BASE_URL=https://api.deepseek.com\nLLM_API_KEY=${deepKey}\nLLM_MODEL=deepseek-chat\nSUNO_COOKIES=keep-me\n`);
+    const raw = Object.fromEntries(readFileSync(path, "utf8").trim().split("\n").map((x) => x.split("=", 2)));
+    let r = parseRegistry(raw);
+    assert.equal(r.activeId, "deepseek", "旧设置迁入稳定预置 id");
+    assert.equal(readSettings(path).apiKey, deepKey);
+    r = updateRegistry(r, { profileId: "openai", providerId: "openai", provider: "OpenAI", baseURL: "https://api.openai.com/v1", apiKey: openKey, model: "gpt-4o-mini", apiFormat: "openai", temperature: .7, maxTokens: 1000, thinking: false });
+    writeRegistry(r, path);
+    assert.equal(readSettings(path).apiKey, openKey, "新激活 profile 进 LangGraph 的 raw key");
+    r.activeId = "deepseek";
+    writeRegistry(r, path);
+    assert.equal(readSettings(path).apiKey, deepKey, "切回恢复原服务商 key");
+    const text = JSON.stringify(toSettingsView(r));
+    assert.ok(!text.includes(deepKey) && !text.includes(openKey), "browser DTO 不含 raw key");
+    assert.ok(text.includes("…1234"), "仅露出末四位脱敏标记");
+    assert.ok(readFileSync(path, "utf8").includes("SUNO_COOKIES=keep-me"), "非 LLM 配置保留");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("S1-T8 自定义 Key 按规范化 BaseURL 分桶、保留/清除语义及换行注入拒绝", () => {
+  assert.equal(normalizeBaseURL(" https://llm.example.com/v1/ "), "https://llm.example.com/v1");
+  assert.equal(profileIdFor("custom", "https://x.example/v1/"), "custom:https://x.example/v1");
+  const base = parseRegistry({});
+  const a = { profileId: profileIdFor("custom", "https://a.example/v1/"), providerId: "custom", provider: "A", baseURL: "https://a.example/v1/", model: "m", apiFormat: "openai" as const, temperature: .8, maxTokens: 100, thinking: false };
+  let r = updateRegistry(base, { ...a, apiKey: "key-a" });
+  r = updateRegistry(r, { ...a });
+  assert.equal(r.profiles[a.profileId].apiKey, "key-a", "apiKey omit=保留");
+  const b = { ...a, profileId: profileIdFor("custom", "https://b.example/v1"), baseURL: "https://b.example/v1", provider: "B" };
+  r = updateRegistry(r, { ...b, apiKey: "key-b" });
+  assert.equal(r.profiles[a.profileId].apiKey, "key-a");
+  assert.equal(r.profiles[b.profileId].apiKey, "key-b", "不同 base URL 独立桶");
+  r = updateRegistry(r, { ...a, clearApiKey: true });
+  assert.equal(r.profiles[a.profileId].apiKey, "", "clear 只影响当前桶");
+  assert.throws(() => updateRegistry(r, { ...b, apiKey: "bad\nSUNO_COOKIES=steal" }), /换行/);
 });
