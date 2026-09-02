@@ -321,3 +321,5 @@ Stage 1 ──► Stage 2 ──► Stage 3 ──► Stage 6（6.1 流式可观
 3. **替代生成通道**：官方 API waitlist/合作通道、第三方聚合（如 SunoAPI.org/RingAPI 类）镜像的接口保真度与价格；横评表=延迟/成功率/风控暴露面/许可。
 
 **交付形态**：调研报告（`docs/risk-control-research.md`）+ 决策点清单（选哪条线接入）→ 再立实现 Stage。**验收标准**：连续 10 次真实生成无人工介入成功率 ≥80%，或给出明确「不可行+替代通道」结论。
+
+> **扩展设计点（2026-09-01）**：引擎池化——多第三方音乐模型接入调研已完成 → [music-models-research.md](music-models-research.md)（Top-K：Mureka/Eleven Music/ACE-Step/YuE + MusicGen 辅位；接入全部走既有 `EngineAdapter`，judge/交付链引擎无关）。
