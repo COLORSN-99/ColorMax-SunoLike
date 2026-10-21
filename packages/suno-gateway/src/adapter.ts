@@ -147,6 +147,135 @@ export class SunoGatewayAdapter {
     }
   }
 
+  /**
+   * 检查配额是否充足
+   * @returns credits 信息
+   */
+  private async checkQuota(api: Awaited<ReturnType<typeof sunoApi>>): Promise<{ credits_left: number }> {
+    const credits = (await api.get_credits()) as { credits_left: number };
+    if (credits.credits_left <= 0) {
+      throw new SunoQuotaError(`配额耗尽（剩余 ${credits.credits_left}）`);
+    }
+    return credits;
+  }
+
+  /**
+   * 构建生成请求的 prompt 和 tags
+   * @returns { prompt, tags }
+   */
+  private buildGenerationParams(req: SunoRenderRequest): { prompt: string; tags: string } {
+    const tags = [req.arrangement.groove, `${req.arrangement.key}调`, ...req.arrangement.chordProgression].join("、");
+    const prompt =
+      req.lyrics.join("\n") +
+      `\n\n[创作约束] 调性=${req.arrangement.key}，速度=${req.arrangement.bpm}bpm，节奏型=${req.arrangement.groove}，目标时长≈${req.durationSec}s`;
+    return { prompt, tags };
+  }
+
+  /**
+   * 执行自定义生成请求
+   * @returns 生成的歌曲列表
+   */
+  private async executeGeneration(
+    api: Awaited<ReturnType<typeof sunoApi>>,
+    params: { prompt: string; tags: string; title: string },
+    callId: string,
+    emit: (evt: AgentStreamEvent) => void
+  ): Promise<Awaited<ReturnType<typeof api.custom_generate>>> {
+    return await api.custom_generate(
+      params.prompt,
+      params.tags,
+      params.title,
+      false,
+      DEFAULT_MODEL,
+      true,
+      undefined,
+      (infos, elapsedMs) => {
+        const done = infos.filter((a) => a.status === "complete" || a.status === "error").length;
+        emit({
+          type: "suno_progress",
+          callId,
+          stage: "poll",
+          done,
+          total: infos.length,
+          status: infos.every((a) => a.status === "complete")
+            ? "complete"
+            : infos.some((a) => a.status === "error")
+            ? "error"
+            : "streaming",
+          elapsedMs,
+          note: infos.map((a) => `${a.id.slice(0, 8)}:${a.status}`).join(" "),
+        });
+      }
+    );
+  }
+
+  /**
+   * 生成歌曲（带验证码中途重试）
+   * @returns 生成的歌曲列表
+   */
+  private async generateWithRetry(
+    api: Awaited<ReturnType<typeof sunoApi>>,
+    params: { prompt: string; tags: string; title: string },
+    callId: string,
+    hooks: GatewayRenderHooks | undefined,
+    step: <T>(tool: string, fn: () => Promise<T>, note?: (r: T) => string) => Promise<T>
+  ): Promise<Awaited<ReturnType<typeof api.custom_generate>>> {
+    const genNote = (r: Awaited<ReturnType<typeof api.custom_generate>>) =>
+      `clips: ${r.map((a) => a.id.slice(0, 8)).join(",")}`;
+    const emit = (evt: AgentStreamEvent) => hooks?.emit?.(evt);
+
+    try {
+      return await step("customGenerate", () => this.executeGeneration(api, params, callId, emit), genNote);
+    } catch (e) {
+      // 生成中途触发验证码（token 被撤，上游 getCaptcha fail-fast）→ 转一次人工等待，放行后重投
+      if (!(e instanceof CaptchaRequiredError) || e instanceof CaptchaTimeoutError) throw e;
+      const g2 = await step("captchaGate", () => api.captchaGate(), () => "生成中途再触发验证");
+      if (g2.required) await this.gateWait(api, callId, hooks, g2);
+      return await step("customGenerate", () => this.executeGeneration(api, params, callId, emit), genNote);
+    }
+  }
+
+  /**
+   * 确认歌曲生成完成
+   * @returns 完成的歌曲信息
+   */
+  private async confirmComplete(
+    api: Awaited<ReturnType<typeof sunoApi>>,
+    songId: string
+  ): Promise<NonNullable<Awaited<ReturnType<typeof api.get>>[number]>> {
+    const songs = await api.get([songId]);
+    const final = songs.find((a) => a.status === "complete");
+    if (!final) throw new Error("音频未就绪（轮询超时）");
+    return final;
+  }
+
+  /**
+   * 下载加密音频
+   * @returns 加密的音频数据
+   */
+  private async downloadEncrypted(audioUrl: string): Promise<Uint8Array> {
+    const res = await this.transport().get(audioUrl, { responseType: "arraybuffer", timeout: 60_000 });
+    return new Uint8Array(res.data as ArrayBuffer);
+  }
+
+  /**
+   * 保存解密后的音频文件
+   * @returns 文件相对路径
+   */
+  private async saveAudioFile(
+    decrypted: Uint8Array,
+    title: string,
+    seed: number,
+    ext: string
+  ): Promise<string> {
+    const fileName = `suno_${title.slice(0, 40).replace(/[^\w一-鿿-]+/g, "_")}_${seed}.${ext}`;
+    if (!existsSync(this.opts.publicDir)) {
+      await mkdir(this.opts.publicDir, { recursive: true });
+    }
+    await writeFile(join(this.opts.publicDir, fileName), decrypted);
+    return `/generated/${fileName}`;
+  }
+
   private async tryRender(cookie: string, req: SunoRenderRequest, hooks?: GatewayRenderHooks): Promise<SunoRenderResult> {
     const callId = hooks?.callId ?? randomUUID();
     const emit = (evt: AgentStreamEvent) => hooks?.emit?.(evt);
@@ -169,72 +298,55 @@ export class SunoGatewayAdapter {
       fingerprint: this.opts.fingerprint,
       userAgent: this.opts.userAgent,
     });
+
     // ⑱ 闸门预检+人工等待编排（R1 UX 2026-09-01）：required 不再 fail-fast 终结 job，
     // 挂起轮询 c/check 直到用户在浏览器过一次验证（自动续跑）；TTL 超时抛 CaptchaTimeoutError
     // → cookie 轮换；池耗尽 → 失败编排（state_saved 缓存 + 一次性 LLM 终报 + failed(captcha)）
-    const gate = await step("captchaGate", () => api.captchaGate(), (g) => (g.required ? `需验证（转人工等待）captcha_version=${g.version ?? "?"}` : "放行"));
+    const gate = await step("captchaGate", () => api.captchaGate(), (g) =>
+      g.required ? `需验证（转人工等待）captcha_version=${g.version ?? "?"}` : "放行"
+    );
     if (gate.required) await this.gateWait(api, callId, hooks, gate);
+
     // 配额预检（get_limit 等价：/api/billing/info/）
-    await step("quotaCheck", async () => {
-      const c = (await api.get_credits()) as { credits_left: number };
-      if (c.credits_left <= 0) throw new SunoQuotaError(`配额耗尽（剩余 ${c.credits_left}）`);
-      return c;
-    }, (c) => `剩余 credits：${c.credits_left}`);
+    await step("quotaCheck", () => this.checkQuota(api), (c) => `剩余 credits：${c.credits_left}`);
 
     // custom_generate（计划驱动：lyrics 全文 + 风格/调性/节奏型 tags）
-    const tags = [req.arrangement.groove, `${req.arrangement.key}调`, ...req.arrangement.chordProgression].join("、");
-    const prompt =
-      req.lyrics.join("\n") +
-      `\n\n[创作约束] 调性=${req.arrangement.key}，速度=${req.arrangement.bpm}bpm，节奏型=${req.arrangement.groove}，目标时长≈${req.durationSec}s`;
-    // vendor onPoll（二次开发点⑮）→ suno_progress 帧：生成轮询实时回对话
-    const gen = () =>
-      api.custom_generate(prompt, tags, req.title, false, DEFAULT_MODEL, true, undefined, (infos, elapsedMs) => {
-        const done = infos.filter((a) => a.status === "complete" || a.status === "error").length;
-        emit({
-          type: "suno_progress", callId, stage: "poll", done, total: infos.length,
-          status: infos.every((a) => a.status === "complete") ? "complete"
-            : infos.some((a) => a.status === "error") ? "error" : "streaming",
-          elapsedMs,
-          note: infos.map((a) => `${a.id.slice(0, 8)}:${a.status}`).join(" "),
-        });
-      });
-    const genNote = (r: Awaited<ReturnType<typeof gen>>) => `clips: ${r.map((a) => a.id.slice(0, 8)).join(",")}`;
-    let songs: Awaited<ReturnType<typeof gen>>;
-    try {
-      songs = await step("customGenerate", gen, genNote);
-    } catch (e) {
-      // 生成中途触发验证码（token 被撤，上游 getCaptcha fail-fast）→ 转一次人工等待，放行后重投
-      if (!(e instanceof CaptchaRequiredError) || e instanceof CaptchaTimeoutError) throw e;
-      const g2 = await step("captchaGate", () => api.captchaGate(), () => "生成中途再触发验证");
-      if (g2.required) await this.gateWait(api, callId, hooks, g2);
-      songs = await step("customGenerate", gen, genNote);
-    }
+    const params = this.buildGenerationParams(req);
+    const songs = await this.generateWithRetry(api, { ...params, title: req.title }, callId, hooks, step);
     const [primary] = songs;
     if (!primary) throw new Error("Suno 未返回作品");
 
     // 兜底轮询（wait_audio 内部已轮询到 waitAudioMs；feed 仅确认状态）
-    const final = await step("feedConfirm", async () =>
-      (await api.get([primary.id])).find((a) => a.status === "complete"));
-    if (!final) throw new Error("音频未就绪（轮询超时）");
+    const final = await step("feedConfirm", () => this.confirmComplete(api, primary.id));
 
     // 二次开发点⑪: feed 不含 media_urls（audio_url 恒为 forbidden 占位）——经 /api/clip/{id} 详情取真实音频源
     const detail = await step("clipDetail", () => api.getClip(final.id) as Promise<Record<string, unknown>>);
+
     // 二次开发点⑭: 下载密文 → DRM 解密（rights GCM unwrap + AES-CTR，逆向自 suno web）→ 明文同源保存 → 本地播放
     const sources = this.resolveSources(detail);
     if (sources.length === 0) throw new Error("音频源缺失（详情接口 media_urls 未就绪）");
-    const encrypted = await step("download", async () => {
-      const res = await this.transport().get(sources[0]!, { responseType: "arraybuffer", timeout: 60_000 });
-      return new Uint8Array(res.data as ArrayBuffer);
-    }, (b) => `${b.byteLength} bytes（加密源）`);
-    const decrypted = await step("decrypt", () => decryptClipAudio(api, final.id, encrypted), (b) => `${b.byteLength} bytes（明文 m4a）`);
+
+    const encrypted = await step(
+      "download",
+      () => this.downloadEncrypted(sources[0]!),
+      (b) => `${b.byteLength} bytes（加密源）`
+    );
+
+    const decrypted = await step(
+      "decrypt",
+      () => decryptClipAudio(api, final.id, encrypted),
+      (b) => `${b.byteLength} bytes（明文 m4a）`
+    );
+
     const ext = "m4a";
-    const fileName = `suno_${req.title.slice(0, 40).replace(/[^\w一-鿿-]+/g, "_")}_${req.seed}.${ext}`;
-    await step("saveFile", async () => {
-      if (!existsSync(this.opts.publicDir)) await mkdir(this.opts.publicDir, { recursive: true });
-      await writeFile(join(this.opts.publicDir, fileName), decrypted);
-    }, () => `/generated/${fileName}`);
+    const audioUrl = await step(
+      "saveFile",
+      () => this.saveAudioFile(decrypted, req.title, req.seed, ext),
+      (path) => path
+    );
+
     return {
-      audioUrl: `/generated/${fileName}`,
+      audioUrl,
       sourceFormat: ext as "mp3" | "wav" | "flac" | "m4a",
       durationSec: Number(final.duration ?? req.durationSec) || req.durationSec,
       raw: final as unknown as Record<string, unknown>,
