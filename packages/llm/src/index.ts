@@ -2,7 +2,8 @@ import { readFileSync, existsSync } from "node:fs";
 import { parseRegistry, registrySettings, writeRegistry } from "./profiles.ts";
 import { createHash } from "node:crypto";
 import JSON5 from "json5";
-import { parseEnvFile, CONFIG } from "@colormax/config";
+import { parseEnvFile } from "@colormax/config/env-loader";
+import { CONFIG } from "@colormax/config";
 
 /** LLM 设置（DeepSeek 官方接入字段集：provider/BaseURL/APIKey/API 格式/Model/max_tokens/temperature/thinking） */
 export type ApiFormat = "openai" | "anthropic";

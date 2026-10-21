@@ -3,7 +3,7 @@ import {
   parseRegistry, toSettingsView, updateRegistry, validateSettings, writeRegistry,
   type ApiFormat, type ProviderProfile,
 } from "@colormax/llm";
-import { parseEnvFile } from "@colormax/config";
+import { parseEnvFile } from "@colormax/config/env-loader";
 import { UpdateSettingsRequestSchema, validateRequest } from "@/lib/api-schemas";
 import { logger, ValidationError } from "@colormax/logger";
 
