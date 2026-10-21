@@ -1,7 +1,6 @@
 /**
  * localStorage 会话持久化（R2 / Stage 4.1，ADR-001 过渡方案）
- * 边界：仅浏览器端；不引入任何服务端/DB 持久化。换 agent runtime/工作流编排时整体迁 SQL。
- * 纯函数 + 注入 KV（浏览器传 window.localStorage，测试传内存桩）。
+ * 现使用 IPersistence 抽象层，保持向后兼容
  */
 import type { Msg } from "./segments.ts";
 
@@ -9,6 +8,26 @@ export interface KV {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
+}
+
+/** 全局 KV 实例（直接使用 window.localStorage 以保持向后兼容） */
+let kvInstance: KV | null = null;
+
+function getKV(): KV {
+  if (!kvInstance) {
+    // 浏览器环境：直接使用 localStorage（保持 100% 向后兼容）
+    if (typeof window !== "undefined") {
+      kvInstance = window.localStorage;
+    } else {
+      // SSR 环境：使用内存 fallback
+      kvInstance = {
+        getItem: () => null,
+        setItem: () => {},
+        removeItem: () => {},
+      };
+    }
+  }
+  return kvInstance;
 }
 
 export interface SessionMeta {
@@ -45,13 +64,15 @@ export const newSession = (title: string): SessionMeta => ({
   updatedAt: Date.now(),
 });
 
-export function listSessions(kv: KV): SessionMeta[] {
-  return safeParse<SessionMeta[]>(kv.getItem(K_SESSIONS), []);
+export function listSessions(kv?: KV): SessionMeta[] {
+  const kvActual = kv ?? getKV();
+  return safeParse<SessionMeta[]>(kvActual.getItem(K_SESSIONS), []);
 }
 
-export function saveSessions(kv: KV, list: SessionMeta[]): void {
+export function saveSessions(kv: KV | undefined, list: SessionMeta[]): void {
+  const kvActual = kv ?? getKV();
   try {
-    kv.setItem(K_SESSIONS, JSON.stringify(list.slice(0, SESSION_CAP)));
+    kvActual.setItem(K_SESSIONS, JSON.stringify(list.slice(0, SESSION_CAP)));
   } catch {
     /* 配额异常静默（降级为不持久化，不影响功能） */
   }
@@ -71,52 +92,59 @@ export function serializeMsgs(msgs: Msg[]): Msg[] {
   }));
 }
 
-export function loadMsgs(kv: KV, sessionId: string): Msg[] {
-  return safeParse<Msg[]>(kv.getItem(K_MSGS(sessionId)), []);
+export function loadMsgs(kv: KV | undefined, sessionId: string): Msg[] {
+  const kvActual = kv ?? getKV();
+  return safeParse<Msg[]>(kvActual.getItem(K_MSGS(sessionId)), []);
 }
 
-export function saveMsgs(kv: KV, sessionId: string, msgs: Msg[]): void {
+export function saveMsgs(kv: KV | undefined, sessionId: string, msgs: Msg[]): void {
+  const kvActual = kv ?? getKV();
   try {
-    kv.setItem(K_MSGS(sessionId), JSON.stringify(serializeMsgs(msgs)));
+    kvActual.setItem(K_MSGS(sessionId), JSON.stringify(serializeMsgs(msgs)));
   } catch {
     /* 配额异常静默 */
   }
 }
 
 /* ===== 作品看板快照（SUNO_COOKIES 失效/冷却期不白屏） ===== */
-export function saveBoard<T>(kv: KV, songs: T[], at = Date.now()): void {
+export function saveBoard<T>(kv: KV | undefined, songs: T[], at = Date.now()): void {
+  const kvActual = kv ?? getKV();
   try {
-    kv.setItem(K_BOARD, JSON.stringify(songs));
-    kv.setItem(K_BOARD_AT, String(at));
+    kvActual.setItem(K_BOARD, JSON.stringify(songs));
+    kvActual.setItem(K_BOARD_AT, String(at));
   } catch {
     /* ignore */
   }
 }
 
-export function loadBoard<T>(kv: KV, now = Date.now()): { songs: T[]; at: number } | null {
-  const at = Number(kv.getItem(K_BOARD_AT) ?? "0");
+export function loadBoard<T>(kv: KV | undefined, now = Date.now()): { songs: T[]; at: number } | null {
+  const kvActual = kv ?? getKV();
+  const at = Number(kvActual.getItem(K_BOARD_AT) ?? "0");
   if (!at || now - at > BOARD_TTL_MS) return null;
-  const songs = safeParse<T[]>(kv.getItem(K_BOARD), null as unknown as T[]);
+  const songs = safeParse<T[]>(kvActual.getItem(K_BOARD), null as unknown as T[]);
   return Array.isArray(songs) ? { songs, at } : null;
 }
 
 /* ===== 失败快照冗余（Step6 resume 用；同进程接续，跨进程不接续——用户拍板） ===== */
-export function saveResume(kv: KV, jobId: string, snap: unknown, at = Date.now()): void {
+export function saveResume(kv: KV | undefined, jobId: string, snap: unknown, at = Date.now()): void {
+  const kvActual = kv ?? getKV();
   try {
-    kv.setItem(K_RESUME(jobId), JSON.stringify({ snap, at }));
+    kvActual.setItem(K_RESUME(jobId), JSON.stringify({ snap, at }));
   } catch {
     /* ignore */
   }
 }
 
-export function loadResume<T>(kv: KV, jobId: string, now = Date.now()): T | null {
-  const v = safeParse<{ snap: T; at: number } | null>(kv.getItem(K_RESUME(jobId)), null);
+export function loadResume<T>(kv: KV | undefined, jobId: string, now = Date.now()): T | null {
+  const kvActual = kv ?? getKV();
+  const v = safeParse<{ snap: T; at: number } | null>(kvActual.getItem(K_RESUME(jobId)), null);
   if (!v || now - v.at > RESUME_TTL_MS) return null;
   return v.snap;
 }
 
-export function clearResume(kv: KV, jobId: string): void {
-  kv.removeItem(K_RESUME(jobId));
+export function clearResume(kv: KV | undefined, jobId: string): void {
+  const kvActual = kv ?? getKV();
+  kvActual.removeItem(K_RESUME(jobId));
 }
 
 /* ===== 刷新恢复三分支（SM-4 核心语义） ===== */

@@ -4,6 +4,8 @@
  *   chatUrl = strip 尾斜杠(base) + ("/messages" | "/chat/completions")
  * 因此各家版本前缀差异（智谱 /api/paas/v4、阿里 /compatible-mode/v1、DeepSeek Anthropic /anthropic/v1）
  * 全部内联进 openaiBase/anthropicBase，面板选中即填对，不再要求用户懂各家的 path 差异。
+ *
+ * 现与 LlmProviderRegistry 保持同步，确保注册表中的所有提供商都能在 UI 中选择
  */
 export interface ProviderModel {
   id: string;
@@ -53,6 +55,22 @@ export const PROVIDERS: ProviderPreset[] = [
     balanceUrl: "https://platform.deepseek.com/usage",
     docsUrl: "https://api-docs.deepseek.com/zh-cn/",
     note: "OpenAI + Anthropic 双兼容；余额不足返回 HTTP 402",
+  },
+  {
+    id: "deepseek-reasoning",
+    label: "DeepSeek R1（推理专用）",
+    access: "domestic",
+    openaiBase: "https://api.deepseek.com",
+    defaultFormat: "openai",
+    models: [
+      { id: "deepseek-reasoner", label: "reasoner（推理链）", reasoning: true },
+    ],
+    defaultModel: "deepseek-reasoner",
+    defaultMaxTokens: 4096,
+    consoleUrl: "https://platform.deepseek.com/api_keys",
+    balanceUrl: "https://platform.deepseek.com/usage",
+    docsUrl: "https://api-docs.deepseek.com/zh-cn/",
+    note: "DeepSeek R1 推理模型专用配置",
   },
   {
     id: "qwen",
@@ -143,6 +161,24 @@ export const PROVIDERS: ProviderPreset[] = [
     consoleUrl: "https://platform.openai.com/api-keys",
     balanceUrl: "https://platform.openai.com/usage",
     docsUrl: "https://platform.openai.com/docs/api-reference/chat",
+    note: "需代理/科学上网；国内 IP 直连会被拒",
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic · Claude",
+    access: "proxy",
+    anthropicBase: "https://api.anthropic.com/v1",
+    openaiBase: "",
+    defaultFormat: "anthropic",
+    models: [
+      { id: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet" },
+      { id: "claude-3-opus-20240229", label: "Claude 3 Opus" },
+    ],
+    defaultModel: "claude-3-5-sonnet-20241022",
+    defaultMaxTokens: 8192,
+    consoleUrl: "https://console.anthropic.com/settings/keys",
+    balanceUrl: "https://console.anthropic.com/settings/billing",
+    docsUrl: "https://docs.anthropic.com/en/api",
     note: "需代理/科学上网；国内 IP 直连会被拒",
   },
   {

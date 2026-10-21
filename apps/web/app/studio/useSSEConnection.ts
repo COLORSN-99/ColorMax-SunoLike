@@ -3,12 +3,13 @@
 /**
  * SSE 事件流连接管理 hook
  * 职责：从 /api/jobs/:id/events 消费 SSE 流，应用事件到 segments，节流落盘
+ * 现通过 IPersistence 抽象层访问 localStorage
  */
 import { useCallback, useState } from "react";
 import type { Msg, Segment, Evt } from "@/lib/segments";
 import { applyEvent } from "@/lib/segments";
 import { parseSseBuffer } from "@/lib/sse";
-import type { KV } from "@/lib/storage";
+import { saveMsgs as storageSaveMsgs } from "@/lib/storage";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -27,9 +28,7 @@ export function useSSEConnection() {
    * @param startSeq - 起始序号（0=全量，>0=续播）
    * @param existing - 现有消息列表
    * @param targetActive - 当前激活会话 ID（用于落盘）
-   * @param kv - localStorage 抽象
    * @param onMsgsUpdate - 消息更新回调
-   * @param saveMsgs - 持久化消息函数
    */
   const consume = useCallback(
     async (
@@ -37,9 +36,7 @@ export function useSSEConnection() {
       startSeq: number,
       existing: Msg[],
       targetActive: string,
-      kv: KV | null,
       onMsgsUpdate: (msgs: Msg[]) => void,
-      saveMsgs: (kv: KV, sessionId: string, msgs: Msg[]) => void,
     ) => {
       const url = `/api/jobs/${jobId}/events${startSeq > 0 ? `?after=${startSeq}` : ""}`;
       const res = await fetch(url);
@@ -87,13 +84,13 @@ export function useSSEConnection() {
           // localStorage 节流：高频 thinking 帧下每 30 帧落盘一次（终态帧必落）
           sinceSave++;
           const terminal = f.event === "done" || f.event === "failed" || f.event === "error_review";
-          if (kv && targetActive && (terminal || sinceSave >= 30)) {
-            saveMsgs(kv, targetActive, cur);
+          if (terminal || sinceSave >= 30) {
+            storageSaveMsgs(undefined, targetActive, cur);
             sinceSave = 0;
           }
         }
       }
-      if (kv && targetActive) saveMsgs(kv, targetActive, cur);
+      storageSaveMsgs(undefined, targetActive, cur);
     },
     [upsertAssistant],
   );

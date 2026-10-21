@@ -272,8 +272,14 @@ test("S1-T6 服务商目录：chatUrl 拼接各家版本前缀正确 + 结构完
   assert.ok(domestic.length >= 3, "国内直连家数");
   for (const p of PROVIDERS) {
     if (p.id === "custom") continue;
-    assert.ok(p.openaiBase, p.id + " openaiBase");
-    assert.ok(!p.openaiBase!.endsWith("/"), p.id + " base 不应以 / 结尾");
+    // 至少有 openaiBase 或 anthropicBase 其一
+    assert.ok(p.openaiBase || p.anthropicBase, p.id + " 需要至少一个 base");
+    if (p.openaiBase) {
+      assert.ok(!p.openaiBase.endsWith("/"), p.id + " openaiBase 不应以 / 结尾");
+    }
+    if (p.anthropicBase) {
+      assert.ok(!p.anthropicBase.endsWith("/"), p.id + " anthropicBase 不应以 / 结尾");
+    }
     assert.ok(p.defaultModel === "" || p.models.some((m) => m.id === p.defaultModel), p.id + " defaultModel 在 models 内");
     assert.ok(p.consoleUrl && p.docsUrl, p.id + " 有取key/文档链接");
   }
