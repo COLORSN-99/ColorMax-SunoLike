@@ -49,12 +49,15 @@ export interface IPersistence<T = unknown> {
  */
 export class LocalStoragePersistence<T = unknown> implements IPersistence<T> {
   private prefix: string;
+  private storage: Storage;
 
   /**
    * @param prefix - 键前缀，用于命名空间隔离（例如 "colormax:"）
+   * @param storage - Storage 实例（默认 window.localStorage，测试时可注入 mock）
    */
-  constructor(prefix = "") {
+  constructor(prefix = "", storage?: Storage) {
     this.prefix = prefix;
+    this.storage = storage ?? (typeof window !== "undefined" ? window.localStorage : null as any);
   }
 
   private getFullKey(key: string): string {
@@ -62,9 +65,9 @@ export class LocalStoragePersistence<T = unknown> implements IPersistence<T> {
   }
 
   get(key: string): T | null {
-    if (typeof window === "undefined") return null; // SSR 兼容
+    if (!this.storage) return null; // SSR 兼容
     try {
-      const raw = window.localStorage.getItem(this.getFullKey(key));
+      const raw = this.storage.getItem(this.getFullKey(key));
       if (raw === null) return null;
       return JSON.parse(raw) as T;
     } catch {
@@ -73,32 +76,32 @@ export class LocalStoragePersistence<T = unknown> implements IPersistence<T> {
   }
 
   set(key: string, value: T): void {
-    if (typeof window === "undefined") return; // SSR 兼容
+    if (!this.storage) return; // SSR 兼容
     try {
-      window.localStorage.setItem(this.getFullKey(key), JSON.stringify(value));
+      this.storage.setItem(this.getFullKey(key), JSON.stringify(value));
     } catch (e) {
       console.error(`[LocalStoragePersistence] Failed to set ${key}:`, e);
     }
   }
 
   remove(key: string): void {
-    if (typeof window === "undefined") return;
-    window.localStorage.removeItem(this.getFullKey(key));
+    if (!this.storage) return;
+    this.storage.removeItem(this.getFullKey(key));
   }
 
   clear(): void {
-    if (typeof window === "undefined") return;
+    if (!this.storage) return;
     const keysToRemove = this.keys();
     for (const key of keysToRemove) {
-      window.localStorage.removeItem(this.getFullKey(key));
+      this.storage.removeItem(this.getFullKey(key));
     }
   }
 
   keys(): string[] {
-    if (typeof window === "undefined") return [];
+    if (!this.storage) return [];
     const result: string[] = [];
-    for (let i = 0; i < window.localStorage.length; i++) {
-      const key = window.localStorage.key(i);
+    for (let i = 0; i < this.storage.length; i++) {
+      const key = this.storage.key(i);
       if (key && key.startsWith(this.prefix)) {
         result.push(key.slice(this.prefix.length));
       }
@@ -107,8 +110,8 @@ export class LocalStoragePersistence<T = unknown> implements IPersistence<T> {
   }
 
   has(key: string): boolean {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(this.getFullKey(key)) !== null;
+    if (!this.storage) return false;
+    return this.storage.getItem(this.getFullKey(key)) !== null;
   }
 }
 
@@ -141,5 +144,67 @@ export class MemoryPersistence<T = unknown> implements IPersistence<T> {
 
   has(key: string): boolean {
     return this.store.has(key);
+  }
+}
+
+/**
+ * 原始字符串 LocalStorage 适配器
+ * 不进行 JSON 序列化，直接存储原始字符串（用于向后兼容已有 localStorage 数据）
+ */
+export class RawLocalStoragePersistence implements IPersistence<string> {
+  private prefix: string;
+  private storage: Storage;
+
+  constructor(prefix = "", storage?: Storage) {
+    this.prefix = prefix;
+    this.storage = storage ?? (typeof window !== "undefined" ? window.localStorage : null as any);
+  }
+
+  private getFullKey(key: string): string {
+    return this.prefix + key;
+  }
+
+  get(key: string): string | null {
+    if (!this.storage) return null;
+    return this.storage.getItem(this.getFullKey(key));
+  }
+
+  set(key: string, value: string): void {
+    if (!this.storage) return;
+    try {
+      this.storage.setItem(this.getFullKey(key), value);
+    } catch (e) {
+      console.error(`[RawLocalStoragePersistence] Failed to set ${key}:`, e);
+    }
+  }
+
+  remove(key: string): void {
+    if (!this.storage) return;
+    this.storage.removeItem(this.getFullKey(key));
+  }
+
+  clear(): void {
+    if (!this.storage) return;
+    const keysToRemove = this.keys();
+    for (const key of keysToRemove) {
+      this.storage.removeItem(this.getFullKey(key));
+    }
+  }
+
+  keys(): string[] {
+    if (!this.storage) return [];
+    const result: string[] = [];
+    for (let i = 0; i < this.storage.length; i++) {
+      const key = this.storage.key(i);
+      if (key && key.startsWith(this.prefix)) {
+        result.push(key.slice(this.prefix.length));
+      }
+    }
+    return result;
+  }
+
+  has(key: string): boolean {
+    if (!this.storage) return false;
+    return this.storage.getItem(this.getFullKey(key)) !== null;
   }
 }

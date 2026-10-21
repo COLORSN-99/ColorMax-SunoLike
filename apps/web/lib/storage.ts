@@ -1,8 +1,9 @@
 /**
  * localStorage 会话持久化（R2 / Stage 4.1，ADR-001 过渡方案）
- * 现使用 IPersistence 抽象层，保持向后兼容
+ * 通过 IPersistence 抽象层访问 localStorage，保持向后兼容
  */
 import type { Msg } from "./segments.ts";
+import { RawLocalStoragePersistence, MemoryPersistence, type IPersistence } from "@colormax/schema";
 
 export interface KV {
   getItem(key: string): string | null;
@@ -10,21 +11,43 @@ export interface KV {
   removeItem(key: string): void;
 }
 
-/** 全局 KV 实例（直接使用 window.localStorage 以保持向后兼容） */
+/**
+ * KV 适配器：IPersistence<string> → KV 接口
+ * 使用 RawLocalStoragePersistence 避免 JSON 双重编码
+ */
+class PersistenceKVAdapter implements KV {
+  private persistence: IPersistence<string>;
+  
+  constructor(persistence: IPersistence<string>) {
+    this.persistence = persistence;
+  }
+  
+  getItem(key: string): string | null {
+    return this.persistence.get(key);
+  }
+  
+  setItem(key: string, value: string): void {
+    this.persistence.set(key, value);
+  }
+  
+  removeItem(key: string): void {
+    this.persistence.remove(key);
+  }
+}
+
+/** 全局 KV 实例（通过 IPersistence 访问 localStorage） */
 let kvInstance: KV | null = null;
 
 function getKV(): KV {
   if (!kvInstance) {
-    // 浏览器环境：直接使用 localStorage（保持 100% 向后兼容）
     if (typeof window !== "undefined") {
-      kvInstance = window.localStorage;
+      // 使用 RawLocalStoragePersistence（无前缀，无 JSON 编码）保持 100% 向后兼容
+      const persistence = new RawLocalStoragePersistence("");
+      kvInstance = new PersistenceKVAdapter(persistence);
     } else {
-      // SSR 环境：使用内存 fallback
-      kvInstance = {
-        getItem: () => null,
-        setItem: () => {},
-        removeItem: () => {},
-      };
+      // SSR 环境：使用 MemoryPersistence
+      const persistence = new MemoryPersistence<string>();
+      kvInstance = new PersistenceKVAdapter(persistence);
     }
   }
   return kvInstance;
