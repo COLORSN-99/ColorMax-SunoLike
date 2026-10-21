@@ -10,6 +10,8 @@ export interface KV {
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
 }
+import type { KV } from "./segments.ts";
+import { CONFIG } from "@colormax/config";
 
 export interface SessionMeta {
   id: string;
@@ -24,10 +26,10 @@ const K_BOARD = "cm.board.snapshot";
 const K_BOARD_AT = "cm.board.at";
 const K_RESUME = (jobId: string) => `cm.resume:${jobId}`;
 
-const SESSION_CAP = 20;
-const MSG_CAP = 200;
-export const BOARD_TTL_MS = 10 * 60_000;
-export const RESUME_TTL_MS = 24 * 3600_000;
+const SESSION_CAP = CONFIG.storage.sessionCap;
+const MSG_CAP = CONFIG.storage.msgCap;
+export const BOARD_TTL_MS = CONFIG.storage.boardTtlMs;
+export const RESUME_TTL_MS = CONFIG.storage.resumeTtlMs;
 
 const safeParse = <T>(raw: string | null, fallback: T): T => {
   if (!raw) return fallback;

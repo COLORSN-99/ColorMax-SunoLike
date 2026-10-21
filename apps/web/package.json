@@ -11,6 +11,7 @@
   "dependencies": {
     "@ant-design/x": "^2.9.0",
     "@colormax/agents": "workspace:*",
+    "@colormax/config": "workspace:*",
     "@colormax/engine": "workspace:*",
     "@colormax/llm": "workspace:*",
     "@colormax/schema": "workspace:*",

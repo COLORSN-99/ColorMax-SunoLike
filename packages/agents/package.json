@@ -6,6 +6,7 @@
   "main": "src/index.ts",
   "dependencies": {
     "@langchain/langgraph": "^1.0.0",
+    "@colormax/config": "workspace:*",
     "@colormax/llm": "workspace:*",
     "@colormax/schema": "workspace:*",
     "@colormax/engine": "workspace:*"
