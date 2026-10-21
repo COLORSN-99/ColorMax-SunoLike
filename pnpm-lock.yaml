@@ -23,12 +23,18 @@ importers:
       '@colormax/agents':
         specifier: workspace:*
         version: link:../../packages/agents
+      '@colormax/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@colormax/engine':
         specifier: workspace:*
         version: link:../../packages/engine
       '@colormax/llm':
         specifier: workspace:*
         version: link:../../packages/llm
+      '@colormax/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       '@colormax/schema':
         specifier: workspace:*
         version: link:../../packages/schema

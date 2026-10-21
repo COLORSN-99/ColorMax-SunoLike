@@ -1,26 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jobStore } from "@colormax/agents";
 import { readSettings } from "@colormax/llm";
-import { MockAdapter, SunoAdapter } from "@colormax/engine";
-import { join } from "node:path";
-import { sunoEnv } from "@/lib/env";
+import { createEngine } from "@/lib/engine-factory";
 import { ResumeJobResponseSchema } from "@/lib/api-schemas";
-
-/** 引擎重建（与 POST /api/jobs 同策略）：接续需要新的 engine 实例 */
-function resolveEngine() {
-  const { cookies, fingerprint, userAgent } = sunoEnv();
-  if (cookies.length === 0) return new MockAdapter(join(process.cwd(), "public/generated"));
-  return new SunoAdapter({ cookies, publicDir: join(process.cwd(), "public/generated"), fingerprint, userAgent });
-}
+import { logger, ConflictError, NotFoundError } from "@colormax/logger";
 
 /** POST /api/jobs/:id/resume — 从失败快照接续（跳过已完成节点，仅重跑失败点及之后；同进程内存） */
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  if (!jobStore.canResume(id)) return NextResponse.json({ error: "无失败快照可接续（进程可能已重启）" }, { status: 409 });
+  if (!jobStore.canResume(id)) {
+    logger.warn({ jobId: id }, "Cannot resume job - no snapshot or already complete");
+    const error = new ConflictError("无失败快照可接续（进程可能已重启）");
+    return NextResponse.json({ error: error.message }, { status: error.statusCode });
+  }
   const job = jobStore.get(id);
-  if (!job) return NextResponse.json({ error: "not found" }, { status: 404 });
+  if (!job) {
+    logger.warn({ jobId: id }, "Job not found for resume");
+    const error = new NotFoundError("Job", id);
+    return NextResponse.json({ error: error.message }, { status: error.statusCode });
+  }
   // 后台接续（fire-and-forget，事件经 /events 流转；不 await 以免阻塞响应/引擎实例被 GC）
-  void jobStore.resume(id, { engine: resolveEngine(), settings: readSettings() });
+  const { engine } = createEngine();
+  logger.info({ jobId: id }, "Resuming job from failure snapshot");
+  void jobStore.resume(id, { engine, settings: readSettings() });
   const response = { ok: true, fromPhase: "resume" };
   const validated = ResumeJobResponseSchema.parse(response);
   return NextResponse.json(validated);

@@ -4,6 +4,7 @@ import { jobStore } from "@colormax/agents";
 import { createEngine } from "@/lib/engine-factory";
 import { CreateJobRequestSchema, type CreateJobResponse } from "@/lib/api-schemas";
 import { validateRequest } from "@/lib/api-schemas";
+import { logger } from "@colormax/logger";
 
 /**
  * POST /api/jobs — 发起创作任务
@@ -15,12 +16,18 @@ export async function POST(req: NextRequest) {
   const validation = validateRequest(CreateJobRequestSchema, body);
   
   if (!validation.success) {
+    logger.warn({ error: validation.error }, "Job creation validation failed");
     return NextResponse.json({ error: validation.error }, { status: 400 });
   }
 
   const { prompt, sessionId } = validation.data;
   const { engine, mode, modeDoc } = createEngine();
   const job = jobStore.create(sessionId ?? "studio");
+
+  logger.info(
+    { jobId: job.id, sessionId, engineMode: mode, promptLength: prompt.length },
+    "Starting new job",
+  );
 
   void jobStore.run(job.id, {
     prompt,

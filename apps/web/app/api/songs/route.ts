@@ -2,11 +2,16 @@ import { NextResponse } from "next/server";
 import axios from "axios";
 import { sunoApi, detectSystemProxy } from "@colormax/suno-gateway";
 import { sunoEnv } from "@/lib/env";
+import { GetSongsResponseSchema } from "@/lib/api-schemas";
+import { logger, ExternalServiceError } from "@colormax/logger";
 
 /** GET /api/songs — 最近生成歌曲（浏览器会话播放/下载；Suno 源链直挂） */
 export async function GET() {
   const { cookies, ...fp } = sunoEnv();
-  if (cookies.length === 0) return NextResponse.json({ songs: [], note: "未配置 SUNO_COOKIES" });
+  if (cookies.length === 0) {
+    const response = { songs: [], note: "未配置 SUNO_COOKIES" };
+    return NextResponse.json(GetSongsResponseSchema.parse(response));
+  }
   try {
     const proxy = detectSystemProxy();
     const transport = axios.create({
@@ -37,8 +42,12 @@ export async function GET() {
         model: c.model_name,
       });
     }
-    return NextResponse.json({ songs });
+    const response = { songs };
+    return NextResponse.json(GetSongsResponseSchema.parse(response));
   } catch (e) {
-    return NextResponse.json({ songs: [], error: e instanceof Error ? e.message : String(e) });
+    logger.error({ error: e instanceof Error ? e.message : String(e) }, "Failed to fetch songs from Suno");
+    const error = new ExternalServiceError("Suno API", e instanceof Error ? e.message : String(e));
+    const response = { songs: [], error: error.message };
+    return NextResponse.json(GetSongsResponseSchema.parse(response));
   }
 }

@@ -1,9 +1,37 @@
-import { MockAdapter, SunoAdapter, type EngineAdapter } from "@colormax/engine";
+import { MockAdapter, SunoAdapter, EngineRegistry, type EngineAdapter } from "@colormax/engine";
 import { join } from "node:path";
 import { sunoEnv } from "./env";
 
 /**
- * 引擎工厂：根据环境配置选择 Mock 或 Suno 引擎
+ * 全局引擎注册表实例
+ * 单一真相来源（Single Source of Truth）
+ */
+const engineRegistry = new EngineRegistry();
+
+// 注册 Mock 引擎（开发/测试）
+engineRegistry.register(
+  "mock",
+  new MockAdapter(join(process.cwd(), "public/generated")),
+  false,
+);
+
+// 注册 Suno 引擎（生产）
+const { cookies, fingerprint, userAgent } = sunoEnv();
+if (cookies.length > 0) {
+  engineRegistry.register(
+    "suno",
+    new SunoAdapter({
+      cookies,
+      publicDir: join(process.cwd(), "public/generated"),
+      fingerprint,
+      userAgent,
+    }),
+    true, // 有 cookies 时设为默认
+  );
+}
+
+/**
+ * 引擎工厂：根据注册表选择引擎
  * 策略：有 SUNO_COOKIES 则用 Suno，否则用 Mock（本地合成可播音频）
  */
 export function createEngine(): {
@@ -11,20 +39,26 @@ export function createEngine(): {
   mode: "mock" | "suno";
   modeDoc: string;
 } {
-  const { cookies, fingerprint, userAgent } = sunoEnv();
-  const publicDir = join(process.cwd(), "public/generated");
-
-  if (cookies.length === 0) {
+  const engine = engineRegistry.get();
+  if (!engine) {
+    // Fallback: 注册表为空时返回 Mock
     return {
-      engine: new MockAdapter(publicDir),
+      engine: new MockAdapter(join(process.cwd(), "public/generated")),
       mode: "mock",
-      modeDoc: "Mock 本地合成（未配置 SUNO_COOKIES）",
+      modeDoc: "Mock 本地合成（注册表为空）",
     };
   }
 
-  return {
-    engine: new SunoAdapter({ cookies, publicDir, fingerprint, userAgent }),
-    mode: "suno",
-    modeDoc: `Suno 真实引擎（${cookies.length} cookies）`,
-  };
+  const defaultId = engineRegistry.getDefaultId();
+  const mode = defaultId === "suno" ? "suno" : "mock";
+  const modeDoc = mode === "suno"
+    ? `Suno 真实引擎（${cookies.length} cookies）`
+    : "Mock 本地合成（未配置 SUNO_COOKIES）";
+
+  return { engine, mode, modeDoc };
 }
+
+/**
+ * 导出注册表供测试/扩展使用
+ */
+export { engineRegistry };

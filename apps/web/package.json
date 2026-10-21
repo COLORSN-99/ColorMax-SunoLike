@@ -11,8 +11,10 @@
   "dependencies": {
     "@ant-design/x": "^2.9.0",
     "@colormax/agents": "workspace:*",
+    "@colormax/config": "workspace:*",
     "@colormax/engine": "workspace:*",
     "@colormax/llm": "workspace:*",
+    "@colormax/logger": "workspace:*",
     "@colormax/schema": "workspace:*",
     "@colormax/suno-gateway": "workspace:*",
     "antd": "^6.6.2",
