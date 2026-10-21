@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { parseRegistry, registrySettings, writeRegistry } from "./profiles.ts";
 import { createHash } from "node:crypto";
 import JSON5 from "json5";
+import { parseEnvFile } from "@colormax/config";
 
 /** LLM 设置（DeepSeek 官方接入字段集：provider/BaseURL/APIKey/API 格式/Model/max_tokens/temperature/thinking） */
 export type ApiFormat = "openai" | "anthropic";
@@ -34,16 +35,6 @@ export * from "./providers.ts";
 export * from "./profiles.ts";
 
 export const SETTINGS_FILE = ".env.local";
-
-function parseEnvFile(path: string): Record<string, string> {
-  if (!existsSync(path)) return {};
-  const out: Record<string, string> = {};
-  for (const line of readFileSync(path, "utf-8").split("\n")) {
-    const m = line.match(/^\s*([A-Z_0-9]+)=(.*)\s*$/);
-    if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, "");
-  }
-  return out;
-}
 
 export function readSettings(envPath = SETTINGS_FILE): LlmSettings {
   return registrySettings(parseRegistry(parseEnvFile(envPath)));

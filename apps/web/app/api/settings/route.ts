@@ -4,6 +4,7 @@ import {
   type ApiFormat, type ProviderProfile,
 } from "@colormax/llm";
 import { readFileSync, existsSync } from "node:fs";
+import { UpdateSettingsRequestSchema, validateRequest } from "@/lib/api-schemas";
 
 const SETTINGS_FILE = ".env.local";
 function env() {
@@ -35,9 +36,17 @@ interface SaveBody {
 
 /** POST：保存并激活一个 profile；成功响应同样只含脱敏 DTO。 */
 export async function POST(req: NextRequest) {
-  let body: SaveBody;
-  try { body = await req.json() as SaveBody; }
+  let rawBody: SaveBody;
+  try { rawBody = await req.json() as SaveBody; }
   catch { return NextResponse.json({ error: "请求必须是 JSON" }, { status: 400 }); }
+  
+  // Zod validation for API contract
+  const validation = validateRequest(UpdateSettingsRequestSchema, rawBody);
+  if (!validation.success) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
+  const body = rawBody;  // Type narrowing after validation
+  
   const required = [body.profileId, body.providerId, body.provider, body.baseURL, body.model];
   if (required.some((x) => typeof x !== "string" || !x.trim()))
     return NextResponse.json({ error: "profileId/providerId/provider/baseURL/model 必填" }, { status: 400 });

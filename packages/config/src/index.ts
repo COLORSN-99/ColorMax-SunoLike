@@ -59,3 +59,5 @@ export const CONFIG = {
 if (process.env.NODE_ENV !== "production" && process.env.DEBUG_CONFIG) {
   console.log("[CONFIG] Loaded:", JSON.stringify(CONFIG, null, 2));
 }
+
+export { parseEnvFile, loadEnv, loadEnvSafe } from "./env-loader.ts";

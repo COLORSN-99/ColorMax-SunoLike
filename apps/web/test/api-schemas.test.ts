@@ -8,7 +8,12 @@ import {
   ClassifyIntentRequestSchema,
   ClassifyIntentResponseSchema,
   UpdateSettingsRequestSchema,
+  UpdateSettingsResponseSchema,
   TestSettingsRequestSchema,
+  TestSettingsResponseSchema,
+  ChatRequestSchema,
+  GetSongsResponseSchema,
+  ResumeJobResponseSchema,
   ErrorResponseSchema,
 } from "../lib/api-schemas.ts";
 
@@ -201,4 +206,145 @@ test("ErrorResponseSchema - 有效错误响应", () => {
 
   assert.ok(simple.success);
   assert.ok(withDetails.success);
+});
+
+// ===== ResumeJobResponse =====
+test("ResumeJobResponseSchema - 有效响应", () => {
+  const result = validateRequest(ResumeJobResponseSchema, {
+    ok: true,
+    fromPhase: "resume",
+  });
+
+  assert.ok(result.success);
+});
+
+test("ResumeJobResponseSchema - fromPhase 可选", () => {
+  const result = validateRequest(ResumeJobResponseSchema, {
+    ok: true,
+  });
+
+  assert.ok(result.success);
+});
+
+// ===== UpdateSettingsResponse =====
+test("UpdateSettingsResponseSchema - 有效响应", () => {
+  const result = validateRequest(UpdateSettingsResponseSchema, {
+    ok: true,
+  });
+
+  assert.ok(result.success);
+});
+
+// ===== TestSettingsResponse =====
+test("TestSettingsResponseSchema - 成功响应", () => {
+  const result = validateRequest(TestSettingsResponseSchema, {
+    ok: true,
+    responsePreview: "Hello from API",
+  });
+
+  assert.ok(result.success);
+});
+
+test("TestSettingsResponseSchema - 失败响应", () => {
+  const result = validateRequest(TestSettingsResponseSchema, {
+    ok: false,
+    error: "Connection timeout",
+  });
+
+  assert.ok(result.success);
+});
+
+// ===== ChatRequest =====
+test("ChatRequestSchema - 简单消息", () => {
+  const result = validateRequest(ChatRequestSchema, {
+    message: "创作一首歌",
+  });
+
+  assert.ok(result.success);
+});
+
+test("ChatRequestSchema - 带历史记录", () => {
+  const result = validateRequest(ChatRequestSchema, {
+    message: "继续",
+    history: [
+      { role: "user", content: "你好" },
+      { role: "assistant", content: "你好！有什么可以帮助你的吗？" },
+    ],
+  });
+
+  assert.ok(result.success);
+});
+
+test("ChatRequestSchema - 拒绝空消息", () => {
+  const result = validateRequest(ChatRequestSchema, {
+    message: "",
+  });
+
+  assert.equal(result.success, false);
+});
+
+test("ChatRequestSchema - 拒绝无效 role", () => {
+  const result = validateRequest(ChatRequestSchema, {
+    message: "test",
+    history: [{ role: "system", content: "Invalid" }],
+  });
+
+  assert.equal(result.success, false);
+});
+
+// ===== GetSongsResponse =====
+test("GetSongsResponseSchema - 成功响应", () => {
+  const result = validateRequest(GetSongsResponseSchema, {
+    songs: [
+      {
+        id: "song-123",
+        title: "Test Song",
+        status: "complete",
+        durationSec: 180,
+        audioUrl: "https://cdn.example.com/song.mp3",
+        imageUrl: "https://cdn.example.com/cover.jpg",
+        createdAt: "2024-01-01T00:00:00Z",
+        model: "chirp-v3",
+      },
+    ],
+  });
+
+  assert.ok(result.success);
+});
+
+test("GetSongsResponseSchema - 空列表", () => {
+  const result = validateRequest(GetSongsResponseSchema, {
+    songs: [],
+    note: "未配置 SUNO_COOKIES",
+  });
+
+  assert.ok(result.success);
+});
+
+test("GetSongsResponseSchema - 错误响应", () => {
+  const result = validateRequest(GetSongsResponseSchema, {
+    songs: [],
+    error: "Network error",
+  });
+
+  assert.ok(result.success);
+});
+
+test("GetSongsResponseSchema - durationSec 可以是字符串", () => {
+  const result = validateRequest(GetSongsResponseSchema, {
+    songs: [
+      {
+        id: "song-123",
+        title: "Test",
+        status: "complete",
+        durationSec: "?",
+        audioUrl: "https://example.com/song.mp3",
+        imageUrl: "https://example.com/cover.jpg",
+        createdAt: "2024-01-01",
+        model: "chirp",
+      },
+    ],
+  });
+
+  assert.ok(result.success);
 });

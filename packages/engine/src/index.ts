@@ -134,3 +134,4 @@ function encodeWav(samples: number[], sampleRate: number): Buffer {
 }
 
 export { SunoAdapter } from "./suno.ts";
+export { EngineRegistry } from "./registry.ts";

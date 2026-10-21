@@ -4,6 +4,7 @@ import { readSettings } from "@colormax/llm";
 import { MockAdapter, SunoAdapter } from "@colormax/engine";
 import { join } from "node:path";
 import { sunoEnv } from "@/lib/env";
+import { ResumeJobResponseSchema } from "@/lib/api-schemas";
 
 /** 引擎重建（与 POST /api/jobs 同策略）：接续需要新的 engine 实例 */
 function resolveEngine() {
@@ -20,7 +21,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!job) return NextResponse.json({ error: "not found" }, { status: 404 });
   // 后台接续（fire-and-forget，事件经 /events 流转；不 await 以免阻塞响应/引擎实例被 GC）
   void jobStore.resume(id, { engine: resolveEngine(), settings: readSettings() });
-  return NextResponse.json({ ok: true, fromPhase: "resume" });
+  const response = { ok: true, fromPhase: "resume" };
+  const validated = ResumeJobResponseSchema.parse(response);
+  return NextResponse.json(validated);
 }
 
 /** DELETE /api/jobs/:id/resume — 放弃接续（switch/cancel：清除失败快照） */

@@ -53,9 +53,12 @@ export type ResumeJobResponse = z.infer<typeof ResumeJobResponseSchema>;
 
 // ===== POST /api/settings =====
 export const UpdateSettingsRequestSchema = z.object({
+  profileId: z.string().optional(),
+  providerId: z.string().optional(),
   provider: z.string().optional(),
   baseURL: z.string().url().optional(),
   apiKey: z.string().optional(),
+  clearApiKey: z.boolean().optional(),
   model: z.string().optional(),
   apiFormat: z.enum(["openai", "anthropic"]).optional(),
   temperature: z.number().min(0).max(2).optional(),
@@ -102,6 +105,24 @@ export const ChatRequestSchema = z.object({
 });
 
 export type ChatRequest = z.infer<typeof ChatRequestSchema>;
+
+// ===== GET /api/songs =====
+export const GetSongsResponseSchema = z.object({
+  songs: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    status: z.string(),
+    durationSec: z.union([z.number(), z.string()]),
+    audioUrl: z.string(),
+    imageUrl: z.string(),
+    createdAt: z.string(),
+    model: z.string(),
+  })),
+  note: z.string().optional(),
+  error: z.string().optional(),
+});
+
+export type GetSongsResponse = z.infer<typeof GetSongsResponseSchema>;
 
 // ===== 错误响应 =====
 export const ErrorResponseSchema = z.object({
