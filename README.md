@@ -25,8 +25,8 @@ pnpm --filter @colormax/web start
 #    未配置 SUNO_COOKIES 时自动用 Mock 引擎（开发调试链路，验收请配真实会话）
 ```
 
-测试：逐包 `node --test test/*.test.ts`（packages/*、apps/web）；当前全仓 51 用例。
-要求：`ffmpeg` 在 `/opt/homebrew/bin/ffmpeg`（Linux 改 `packages/suno-gateway/src` 音频中继路径常量）。
+测试：逐包 `node --test test/*.test.ts`（packages/*、apps/web）；当前全仓 55 用例。
+要求：`ffmpeg` 自动查找系统路径（`which ffmpeg`），或设置 `FFMPEG_PATH` 环境变量指定路径。
 风控（R1-A，见 docs/risk-control-research.md）：可选 `SUNO_FINGERPRINT=hybrid|web`（指纹档）、`SUNO_UA`、`SUNO_CAPTCHA_TTL_MS`（人工验证等待上限，默认 10min）、`SUNO_CAPTCHA_POLL_MS`。生成遇 CAPTCHA 时任务挂起 `pending` + 对话渲染等待卡（打开 suno.com/create 验证），**通过即自动续跑**，无需回复。
 
 LLM Key：设置页把每个服务商的配置和 Key 独立保存在本机 `apps/web/.env.local` 的 `LLM_PROFILES_JSON`（预置服务商按 ID；自定义按规范化 BaseURL 分桶），并维护当前激活档案的 `LLM_*` 镜像供新 LangGraph 任务读取。浏览器只会收到 `hasApiKey` 与 `sk-…末四位` 脱敏摘要，**不会从设置 API 获取 raw Key**；切换服务商时有历史 Key 自动注入服务端调用，无记录则留空填写。

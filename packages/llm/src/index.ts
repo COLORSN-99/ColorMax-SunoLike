@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { parseRegistry, registrySettings, writeRegistry } from "./profiles.ts";
 import { createHash } from "node:crypto";
 import JSON5 from "json5";
+import { CONFIG } from "@colormax/config";
 
 /** LLM 设置（DeepSeek 官方接入字段集：provider/BaseURL/APIKey/API 格式/Model/max_tokens/temperature/thinking） */
 export type ApiFormat = "openai" | "anthropic";
@@ -188,8 +189,8 @@ export async function chatCompletion(
   }
 
   let lastErr: unknown;
-  for (let attempt = 0; attempt <= 2; attempt++) {
-    if (attempt > 0) await sleep(1000 * 2 ** (attempt - 1), opts.signal);
+  for (let attempt = 0; attempt <= CONFIG.llm.maxRetries; attempt++) {
+    if (attempt > 0) await sleep(CONFIG.llm.retryBackoffMs * 2 ** (attempt - 1), opts.signal);
     try {
       const res = await fetch(url, {
         method: "POST",

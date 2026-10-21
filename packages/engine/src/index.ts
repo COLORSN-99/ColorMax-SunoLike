@@ -38,11 +38,11 @@ const CHORD_INTERVALS: Record<string, number[]> = {
   major: [0, 4, 7], minor: [0, 3, 7],
 };
 
-/** Mock：按编曲参数合成和弦音序（16bit PCM wav，可听），保存到 public/generated */
+/** Mock：按编曲参数合成和弦音序（16bit PCM wav，可听），保存到指定目录（默认从环境变量读取） */
 export class MockAdapter implements EngineAdapter {
   private publicDir: string;
-  constructor(publicDir = join(process.cwd(), "public/generated")) {
-    this.publicDir = publicDir;
+  constructor(publicDir?: string) {
+    this.publicDir = publicDir || process.env.GENERATED_DIR || join(process.cwd(), "public/generated");
   }
 
   async render(req: RenderRequest, hooks?: RenderHooks): Promise<RenderResult> {
