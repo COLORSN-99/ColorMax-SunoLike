@@ -33,6 +33,11 @@ if (cookies.length > 0) {
 /**
  * 引擎工厂：根据注册表选择引擎
  * 策略：有 SUNO_COOKIES 则用 Suno，否则用 Mock（本地合成可播音频）
+ * 
+ * 未来扩展：
+ * - ENGINE_PROVIDER=mureka → MurekaAdapter
+ * - ENGINE_PROVIDER=eleven → ElevenMusicAdapter
+ * - ENGINE_PROVIDER=ace-step → ACEStepAdapter
  */
 export function createEngine(): {
   engine: EngineAdapter;

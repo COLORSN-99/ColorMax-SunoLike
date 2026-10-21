@@ -2,8 +2,13 @@ import { extractJson, type LlmSettings } from "@colormax/llm";
 import { JudgeReportSchema, type AlignedSong, type JudgeReport } from "@colormax/schema";
 import { ruleChecks } from "./align.ts";
 import { llmThinkingCall, type StreamEmitter } from "./stream.ts";
+import { CONFIG } from "@colormax/config";
 
-export const PASS_THRESHOLD = 3.5;
+export const PASS_THRESHOLD = CONFIG.agent.passThreshold;
+
+function stableInt(x: number): number {
+  return Number.isFinite(x) ? Math.round(x) : 0;
+}
 
 export interface JudgeDeps {
   settings: LlmSettings;

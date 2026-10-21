@@ -46,7 +46,9 @@ export async function llmThinkingCall(
   const collect = (channel: "content" | "reasoning", t: string) => {
     if (channel === "content") buf += t;
     else bReason += t;
-    if (Date.now() - last >= 80 || buf.length + bReason.length >= 240) flush();
+    const now = Date.now();
+    const len = channel === "content" ? buf.length : bReason.length;
+    if (now - last >= CONFIG.stream.thinkingThrottleMs || len >= CONFIG.stream.thinkingThrottleChars) flush();
   };
   try {
     const res = await chatCompletion(settings, messages, {

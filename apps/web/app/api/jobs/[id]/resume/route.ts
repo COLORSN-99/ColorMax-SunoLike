@@ -5,7 +5,11 @@ import { createEngine } from "@/lib/engine-factory";
 import { ResumeJobResponseSchema } from "@/lib/api-schemas";
 import { logger, ConflictError, NotFoundError } from "@colormax/logger";
 
-/** POST /api/jobs/:id/resume — 从失败快照接续（跳过已完成节点，仅重跑失败点及之后；同进程内存） */
+/**
+ * POST /api/jobs/:id/resume — 从失败快照接续（跳过已完成节点，仅重跑失败点及之后；同进程内存）
+ * 接续失败任务，从失败快照重跑
+ * 引擎实例需重建（避免状态污染）
+ */
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!jobStore.canResume(id)) {

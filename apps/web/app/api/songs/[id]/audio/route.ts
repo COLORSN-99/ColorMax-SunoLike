@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import axios from "axios";
 import { sunoApi, detectSystemProxy, decryptClipAudio, type RightsResponse } from "@colormax/suno-gateway";
 import { sunoEnv } from "@/lib/env";
+import { getFFmpegPath } from "@/lib/paths";
 
 /**
  * GET /api/songs/:id/audio — DRM 解密 → ffmpeg 转码 MP3 缓存（同源 Range、全端可播）
@@ -16,8 +17,9 @@ const transcoding = new Map<string, Promise<{ mp3: Buffer | null; mp4: Buffer }>
 
 function transcodeToMp3(input: Buffer): Promise<Buffer | null> {
   return new Promise((resolve) => {
+    const ffmpegPath = getFFmpegPath();
     const child = execFile(
-      "/opt/homebrew/bin/ffmpeg",
+      ffmpegPath,
       ["-i", "pipe:0", "-vn", "-acodec", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1"],
       { maxBuffer: 20 * 1024 * 1024, encoding: "buffer" },
       (err, stdout) => resolve(!err && stdout?.length ? Buffer.from(stdout) : null),
@@ -59,7 +61,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const cookies = (process.env.SUNO_COOKIES ?? "").split("||").map((c) => c.trim()).filter(Boolean);
   if (cookies.length === 0) return new Response("SUNO_COOKIES 未配置", { status: 400 });
 
-  const cachePath = join(process.cwd(), "public/generated", `dl-${id}.mp3`);
+  const { GENERATED_DIR } = await import("@/lib/paths");
+  const cachePath = join(GENERATED_DIR, `dl-${id}.mp3`);
   try {
     if (existsSync(cachePath)) return serveFile(cachePath, statSync(cachePath).size, req);
 
