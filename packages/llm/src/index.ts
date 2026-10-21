@@ -33,6 +33,7 @@ export const DEFAULT_SETTINGS: LlmSettings = {
 
 export * from "./providers.ts";
 export * from "./profiles.ts";
+export * from "./provider-registry.ts";
 
 export const SETTINGS_FILE = ".env.local";
 
