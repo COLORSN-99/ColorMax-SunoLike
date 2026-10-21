@@ -59,7 +59,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const cookies = (process.env.SUNO_COOKIES ?? "").split("||").map((c) => c.trim()).filter(Boolean);
   if (cookies.length === 0) return new Response("SUNO_COOKIES 未配置", { status: 400 });
 
-  const cachePath = join(process.cwd(), "public/generated", `dl-${id}.mp3`);
+  const { GENERATED_DIR } = await import("@/lib/paths");
+  const cachePath = join(GENERATED_DIR, `dl-${id}.mp3`);
   try {
     if (existsSync(cachePath)) return serveFile(cachePath, statSync(cachePath).size, req);
 

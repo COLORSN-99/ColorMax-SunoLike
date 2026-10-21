@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { readSettings } from "@colormax/llm";
 import { jobStore } from "@colormax/agents";
 import { MockAdapter, SunoAdapter } from "@colormax/engine";
-import { join } from "node:path";
 import { sunoEnv } from "@/lib/env";
+import { GENERATED_DIR } from "@/lib/paths";
 
 /**
  * 引擎选择（Stage 3 新模式：vendor 本地二次开发）：
@@ -13,10 +13,10 @@ import { sunoEnv } from "@/lib/env";
 function resolveEngine() {
   const { cookies, fingerprint, userAgent } = sunoEnv();
   if (cookies.length === 0) {
-    return { engine: new MockAdapter(join(process.cwd(), "public/generated")), mode: "mock" as const };
+    return { engine: new MockAdapter(GENERATED_DIR), mode: "mock" as const };
   }
   return {
-    engine: new SunoAdapter({ cookies, publicDir: join(process.cwd(), "public/generated"), fingerprint, userAgent }),
+    engine: new SunoAdapter({ cookies, publicDir: GENERATED_DIR, fingerprint, userAgent }),
     mode: "suno" as const,
   };
 }
