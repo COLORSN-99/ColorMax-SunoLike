@@ -188,3 +188,5 @@ export const JobSchema = z.object({
   updatedAt: z.string(),
 });
 export type Job = z.infer<typeof JobSchema>;
+
+export * from "./persistence.ts";

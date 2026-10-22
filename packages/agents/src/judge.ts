@@ -6,10 +6,6 @@ import { CONFIG } from "@colormax/config";
 
 export const PASS_THRESHOLD = CONFIG.agent.passThreshold;
 
-function stableInt(x: number): number {
-  return Number.isFinite(x) ? Math.round(x) : 0;
-}
-
 export interface JudgeDeps {
   settings: LlmSettings;
   /** 测试注入：固定 LLM 评分响应 */

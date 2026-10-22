@@ -59,3 +59,6 @@ export const CONFIG = {
 if (process.env.NODE_ENV !== "production" && process.env.DEBUG_CONFIG) {
   console.log("[CONFIG] Loaded:", JSON.stringify(CONFIG, null, 2));
 }
+
+// node:fs .env parsers live in `@colormax/config/server` so client bundles
+// that import CONFIG never pull Node built-ins.

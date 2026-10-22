@@ -6,7 +6,7 @@
  */
 import { useCallback } from "react";
 import type { Msg, Segment } from "@/lib/segments";
-import { loadMsgs, planRestore, type KV } from "@/lib/storage";
+import { loadMsgs, saveMsgs as storageSaveMsgs, planRestore } from "@/lib/storage";
 
 /** 探测服务端 job 现状（304→gone / running / terminal） */
 async function probeJob(id: string): Promise<"terminal" | "running" | "gone"> {
@@ -23,24 +23,20 @@ async function probeJob(id: string): Promise<"terminal" | "running" | "gone"> {
 export function useRestore() {
   /**
    * 刷新恢复：对当前会话未终结的 assistant 消息探测服务端 → 续播/重放/标记丢失
-   * @param kv - localStorage 抽象
    * @param active - 当前激活会话 ID
    * @param upsertAssistant - 更新 assistant 消息的函数
    * @param consume - 消费事件流的函数
    * @param setMsgs - 更新消息列表的函数
-   * @param saveMsgs - 持久化消息函数
    */
   const resumePending = useCallback(
     async (
-      kv: KV | null,
       active: string,
       upsertAssistant: (list: Msg[], jobId: string, segs: Segment[], lastSeq?: number) => Msg[],
       consume: (jobId: string, startSeq: number, existing: Msg[], targetActive: string) => Promise<void>,
       setMsgs: (msgs: Msg[]) => void,
-      saveMsgs: (kv: KV, sessionId: string, msgs: Msg[]) => void,
     ) => {
-      if (!kv || !active) return;
-      const loaded = loadMsgs(kv, active);
+      if (!active) return;
+      const loaded = loadMsgs(undefined, active);
       const actions = await planRestore(loaded, probeJob);
       let cur = loaded;
 
@@ -64,7 +60,7 @@ export function useRestore() {
         }
       }
       setMsgs(cur);
-      if (kv && active) saveMsgs(kv, active, cur);
+      storageSaveMsgs(undefined, active, cur);
     },
     [],
   );

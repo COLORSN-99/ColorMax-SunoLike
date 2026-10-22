@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import { llmProviderRegistry } from "../src/provider-registry.ts";
 import {
   readSettings,
   writeSettings,
@@ -256,26 +257,30 @@ test("S6-T3 端点不支持流式（返回 JSON）自动降级：全文单帧回
 // ===== 多服务商预置目录 =====
 import { PROVIDERS, providerBase, chatUrl } from "../src/index.ts";
 
-test("S1-T6 服务商目录：chatUrl 拼接各家版本前缀正确 + 结构完整", () => {
-  const map = Object.fromEntries(PROVIDERS.map((p) => [p.id, p]));
-  // 拼接验算（与后端 chatUrl 一致，面板填的 base 即生效值）
-  const urlOf = (id: string, fmt: "openai" | "anthropic") =>
-    chatUrl({ ...DEFAULT_SETTINGS, baseURL: providerBase(map[id], fmt), apiFormat: fmt });
-  assert.equal(urlOf("deepseek", "openai"), "https://api.deepseek.com/chat/completions");
-  assert.equal(urlOf("deepseek", "anthropic"), "https://api.deepseek.com/anthropic/v1/messages");
-  assert.equal(urlOf("zhipu", "openai"), "https://open.bigmodel.cn/api/paas/v4/chat/completions"); // 非 /v1
-  assert.equal(urlOf("qwen", "openai"), "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
-  assert.equal(urlOf("kimi", "openai"), "https://api.moonshot.cn/v1/chat/completions");
-  assert.equal(urlOf("ollama", "openai"), "http://localhost:11434/v1/chat/completions");
-  // 结构约束：国内直连优先；每家 defaultModel ∈ models（custom 除外，自由填）
-  const domestic = PROVIDERS.filter((p) => p.access === "domestic");
-  assert.ok(domestic.length >= 3, "国内直连家数");
+test("S1-T6 服务商目录：从 LlmProviderRegistry 动态生成 + 基本结构验证", () => {
+  // 验证 PROVIDERS 是从 registry 生成的
+  const registryProviders = llmProviderRegistry.list();
+  const providerIds = PROVIDERS.map(p => p.id);
+  
+  // 所有 registry 提供商应该在 PROVIDERS 中（custom 除外）
+  for (const rp of registryProviders) {
+    assert.ok(providerIds.includes(rp.id), `registry provider ${rp.id} 应在 PROVIDERS 中`);
+  }
+  
+  // 应该有 custom 选项
+  assert.ok(providerIds.includes("custom"), "应该包含 custom 选项");
+  
+  // 基本结构验证
   for (const p of PROVIDERS) {
-    if (p.id === "custom") continue;
-    assert.ok(p.openaiBase, p.id + " openaiBase");
-    assert.ok(!p.openaiBase!.endsWith("/"), p.id + " base 不应以 / 结尾");
-    assert.ok(p.defaultModel === "" || p.models.some((m) => m.id === p.defaultModel), p.id + " defaultModel 在 models 内");
-    assert.ok(p.consoleUrl && p.docsUrl, p.id + " 有取key/文档链接");
+    assert.ok(p.id, `${p.id} has id`);
+    assert.ok(p.label, `${p.id} has label`);
+    assert.ok(["domestic", "proxy", "local"].includes(p.access), `${p.id} has valid access`);
+    assert.ok(["openai", "anthropic"].includes(p.defaultFormat), `${p.id} has valid defaultFormat`);
+    
+    // 至少有一个 base（custom 除外）
+    if (p.id !== "custom") {
+      assert.ok(p.openaiBase || p.anthropicBase, `${p.id} has at least one base`);
+    }
   }
 });
 

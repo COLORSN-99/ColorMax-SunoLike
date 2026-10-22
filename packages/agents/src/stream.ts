@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chatCompletion, type ChatMessage, type ChatResult, type LlmSettings } from "@colormax/llm";
 import type { AgentStreamEvent, LlmThinkingEvent } from "@colormax/schema";
+import { CONFIG } from "@colormax/config";
 
 export type StreamEmitter = (evt: AgentStreamEvent) => void;
 
@@ -46,9 +47,7 @@ export async function llmThinkingCall(
   const collect = (channel: "content" | "reasoning", t: string) => {
     if (channel === "content") buf += t;
     else bReason += t;
-    const now = Date.now();
-    const len = channel === "content" ? buf.length : bReason.length;
-    if (now - last >= CONFIG.stream.thinkingThrottleMs || len >= CONFIG.stream.thinkingThrottleChars) flush();
+    if (Date.now() - last >= CONFIG.stream.thinkingThrottleMs || buf.length + bReason.length >= CONFIG.stream.thinkingThrottleChars) flush();
   };
   try {
     const res = await chatCompletion(settings, messages, {

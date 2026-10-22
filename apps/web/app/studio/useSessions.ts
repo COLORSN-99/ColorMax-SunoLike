@@ -3,6 +3,7 @@
 /**
  * R2 会话持久化主 hook：组合 SSE 连接、持久化、恢复三个子 hook
  * 职责：对外暴露统一的会话管理 API
+ * 现通过 IPersistence 抽象层访问 localStorage
  */
 import { useCallback, useState } from "react";
 import type { Segment } from "@/lib/segments";
@@ -16,7 +17,6 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 export function useSessions() {
   const { phase, setPhase, consume: rawConsume, upsertAssistant } = useSSEConnection();
   const {
-    kv,
     sessions,
     active,
     msgs,
@@ -37,18 +37,18 @@ export function useSessions() {
     rawSelectSession(id);
   }, [rawSelectSession, setPhase]);
 
-  // 包装 consume：注入 kv 和 setMsgs
+  // 包装 consume：注入 setMsgs
   const consume = useCallback(
     async (jobId: string, startSeq: number, existing: typeof msgs, targetActive: string) => {
-      await rawConsume(jobId, startSeq, existing, targetActive, kv.current, setMsgs, storageSaveMsgs);
+      await rawConsume(jobId, startSeq, existing, targetActive, setMsgs);
     },
-    [rawConsume, kv, setMsgs],
+    [rawConsume, setMsgs],
   );
 
   // 包装 resumePending：注入依赖
   const resumePending = useCallback(async () => {
-    await rawResumePending(kv.current, active, upsertAssistant, consume, setMsgs, storageSaveMsgs);
-  }, [rawResumePending, kv, active, upsertAssistant, consume, setMsgs]);
+    await rawResumePending(active, upsertAssistant, consume, setMsgs);
+  }, [rawResumePending, active, upsertAssistant, consume, setMsgs]);
 
   const run = useCallback(
     async (p: string) => {
@@ -66,7 +66,7 @@ export function useSessions() {
       ];
       updateSessionTitle(sid, trimmed);
       setMsgs(withUser);
-      if (kv.current && sid) storageSaveMsgs(kv.current, sid, withUser);
+      storageSaveMsgs(undefined, sid, withUser);
 
       try {
         // Stage 6.2：上一轮存在失败卡（error 段）→ 意图三分类（resume 接续 / restart 重开 / new 新任务）
@@ -120,12 +120,12 @@ export function useSessions() {
         };
         const cur = upsertAssistant(withUser, "boot-" + uid(), [errSeg]);
         setMsgs(cur);
-        if (kv.current && sid) storageSaveMsgs(kv.current, sid, cur);
+        storageSaveMsgs(undefined, sid, cur);
       } finally {
         setBusy(false);
       }
     },
-    [active, busy, consume, msgs, updateSessionTitle, upsertAssistant, kv, setMsgs, setPhase],
+    [active, busy, consume, msgs, updateSessionTitle, upsertAssistant, setMsgs, setPhase],
   );
 
   return {

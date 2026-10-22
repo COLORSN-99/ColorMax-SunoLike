@@ -6,6 +6,7 @@ import {
   stableInt,
 } from "@colormax/llm";
 import { IntentSchema, CreationPlanSchema } from "@colormax/schema";
+import { ChatRequestSchema, validateRequest } from "@/lib/api-schemas";
 
 /**
  * POST /api/chat — 流式（SSE）：
@@ -13,8 +14,15 @@ import { IntentSchema, CreationPlanSchema } from "@colormax/schema";
  * 全链路真实 LLM 调用（OpenAI 兼容端点），zod 校验后输出；解析失败重试 2 次。
  */
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as { prompt?: string };
-  const prompt = (body.prompt ?? "").trim();
+  const rawBody = (await req.json()) as { prompt?: string; history?: Array<{ role: string; content: string }> };
+  
+  // Zod validation
+  const validation = validateRequest(ChatRequestSchema, { message: rawBody.prompt ?? "", history: rawBody.history });
+  if (!validation.success) {
+    return new Response(JSON.stringify({ error: validation.error }), { status: 400 });
+  }
+  
+  const prompt = validation.data.message.trim();
   if (!prompt) return new Response("prompt required", { status: 400 });
 
   const settings = readSettings();

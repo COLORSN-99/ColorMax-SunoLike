@@ -2,24 +2,45 @@ import { NextRequest, NextResponse } from "next/server";
 import { readSettings } from "@colormax/llm";
 import { jobStore } from "@colormax/agents";
 import { createEngine } from "@/lib/engine-factory";
+import { CreateJobRequestSchema, type CreateJobResponse } from "@/lib/api-schemas";
+import { validateRequest } from "@/lib/api-schemas";
+import { logger } from "@colormax/logger";
 
 /**
- * 发起创作任务（POST /api/jobs）
+ * POST /api/jobs — 发起创作任务
  * LangGraph 编排：intent → plan → dispatch → suno → align → judge → deliver
  * 事件经 /events 流转（SSE）；引擎选择见 lib/engine-factory.ts
  */
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as { prompt?: string; sessionId?: string };
-  const prompt = (body.prompt ?? "").trim();
-  if (!prompt) return NextResponse.json({ error: "prompt required" }, { status: 400 });
+  const body = await req.json();
+  const validation = validateRequest(CreateJobRequestSchema, body);
   
+  if (!validation.success) {
+    logger.warn({ error: validation.error }, "Job creation validation failed");
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
+
+  const { prompt, sessionId } = validation.data;
   const { engine, mode, modeDoc } = createEngine();
-  const job = jobStore.create(body.sessionId ?? "studio");
+  const job = jobStore.create(sessionId ?? "studio");
+
+  logger.info(
+    { jobId: job.id, sessionId, engineMode: mode, promptLength: prompt.length },
+    "Starting new job",
+  );
+
   void jobStore.run(job.id, {
     prompt,
     settings: readSettings(),
     engine,
     maxRetries: 3,
   });
-  return NextResponse.json({ id: job.id, engineMode: mode, engineModeDoc: modeDoc });
+
+  const response: CreateJobResponse = {
+    id: job.id,
+    engineMode: mode,
+    engineModeDoc: modeDoc,
+  };
+
+  return NextResponse.json(response);
 }

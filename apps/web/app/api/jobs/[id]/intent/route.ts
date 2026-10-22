@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jobStore, routeAfterFailure } from "@colormax/agents";
 import { readSettings } from "@colormax/llm";
+import { ClassifyIntentRequestSchema, ClassifyIntentResponseSchema, validateRequest } from "@/lib/api-schemas";
+import { logger } from "@colormax/logger";
 
 /**
  * POST /api/jobs/:id/intent { message } — 失败后新消息意图三分类（Stage 6.2）
@@ -8,9 +10,27 @@ import { readSettings } from "@colormax/llm";
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const body = (await req.json().catch(() => ({}))) as { message?: string };
+  const rawBody = (await req.json().catch(() => ({}))) as { message?: string };
+  
+  // Validate request body
+  const validation = validateRequest(ClassifyIntentRequestSchema, rawBody);
+  if (!validation.success) {
+    logger.warn({ jobId: id, error: validation.error }, "Intent classification validation failed");
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
+  
   const info = jobStore.resumeInfo(id);
-  if (!info || !body.message) return NextResponse.json({ action: "new" });
-  const action = await routeAfterFailure(readSettings(), { phase: info.failPhase, error: info.error }, body.message);
-  return NextResponse.json({ action, failPhase: info.failPhase, origPrompt: info.prompt });
+  if (!info) {
+    logger.info({ jobId: id }, "No resume info, returning 'new' action");
+    return NextResponse.json({ action: "new" });
+  }
+  
+  const action = await routeAfterFailure(readSettings(), { phase: info.failPhase, error: info.error }, validation.data.message);
+  logger.info({ jobId: id, action, failPhase: info.failPhase }, "Intent classified");
+  
+  const response = { action, failPhase: info.failPhase, origPrompt: info.prompt };
+  
+  // Validate response (only the action field is required by ClassifyIntentResponse)
+  const responseValidated = ClassifyIntentResponseSchema.parse({ action });
+  return NextResponse.json({ ...responseValidated, failPhase: info.failPhase, origPrompt: info.prompt });
 }
