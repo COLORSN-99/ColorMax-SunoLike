@@ -9,3 +9,6 @@ dist/
 apps/web/public/generated/
 apps/web/public/decode-test.m4a
 .data/
+coverage/
+playwright-report/
+test-results/

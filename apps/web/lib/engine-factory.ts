@@ -1,6 +1,6 @@
 import { MockAdapter, SunoAdapter, EngineRegistry, type EngineAdapter } from "@colormax/engine";
-import { join } from "node:path";
 import { sunoEnv } from "./env";
+import { GENERATED_DIR } from "./paths";
 
 /**
  * 全局引擎注册表实例
@@ -11,7 +11,7 @@ const engineRegistry = new EngineRegistry();
 // 注册 Mock 引擎（开发/测试）
 engineRegistry.register(
   "mock",
-  new MockAdapter(join(process.cwd(), "public/generated")),
+  new MockAdapter(GENERATED_DIR),
   false,
 );
 
@@ -22,7 +22,7 @@ if (cookies.length > 0) {
     "suno",
     new SunoAdapter({
       cookies,
-      publicDir: join(process.cwd(), "public/generated"),
+      publicDir: GENERATED_DIR,
       fingerprint,
       userAgent,
     }),
@@ -48,7 +48,7 @@ export function createEngine(): {
   if (!engine) {
     // Fallback: 注册表为空时返回 Mock
     return {
-      engine: new MockAdapter(join(process.cwd(), "public/generated")),
+      engine: new MockAdapter(GENERATED_DIR),
       mode: "mock",
       modeDoc: "Mock 本地合成（注册表为空）",
     };

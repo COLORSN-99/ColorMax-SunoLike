@@ -4,14 +4,13 @@
  */
 import type { Msg } from "./segments.ts";
 import { RawLocalStoragePersistence, MemoryPersistence, type IPersistence } from "@colormax/schema";
+import { CONFIG } from "@colormax/config";
 
 export interface KV {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
 }
-import type { KV } from "./segments.ts";
-import { CONFIG } from "@colormax/config";
 
 /**
  * KV 适配器：IPersistence<string> → KV 接口

@@ -6,7 +6,7 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./env-loader": "./src/env-loader.ts"
+    "./server": "./src/server.ts"
   },
   "dependencies": {
     "zod": "^3.23.8"

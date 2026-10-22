@@ -60,5 +60,5 @@ if (process.env.NODE_ENV !== "production" && process.env.DEBUG_CONFIG) {
   console.log("[CONFIG] Loaded:", JSON.stringify(CONFIG, null, 2));
 }
 
-// env-loader is NOT exported here to avoid bundling node:fs in client code
-// Import directly from "@colormax/config/src/env-loader" when needed server-side
+// node:fs .env parsers live in `@colormax/config/server` so client bundles
+// that import CONFIG never pull Node built-ins.
